@@ -1,0 +1,15 @@
+[package]
+name = "latex-preview"
+version = "0.1.0"
+edition = "2021"
+description = "LaTeX math formula hover preview for Zed (companion to the official LaTeX extension)"
+license = "MIT"
+repository = "https://github.com/pikel72/zed-latex-preview"
+readme = "README.md"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.1.0"

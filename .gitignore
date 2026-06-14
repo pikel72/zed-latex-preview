@@ -1,0 +1,10 @@
+# Build outputs
+*.wasm
+target/
+
+# Node
+node_modules/
+server/out/
+
+# OS noise
+**/.DS_Store
