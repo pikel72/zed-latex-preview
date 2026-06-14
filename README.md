@@ -89,7 +89,8 @@ your workspace.  The scanner recognises:
 
 Macros defined in the *current document* take precedence over macros defined
 in other workspace files.  Macros with arguments (`\newcommand{\norm}[1]{…}`)
-are also expanded.
+are expanded, including multi-argument macros (`\newcommand{\foo}[2]{#1+#2}`
+→ `\foo{a}{b}` becomes `a+b`).
 
 ## How it works
 
@@ -104,6 +105,7 @@ are also expanded.
 │            ├─ preamble.ts   scan workspace .tex files  │
 │            ├─ render.ts     MathJax TeX → SVG          │
 │            ├─ cache.ts      LRU render cache           │
+│            ├─ config.ts     user settings              │
 │            └─ server.ts     LSP protocol glue          │
 └────────────────────────────────────────────────────────┘
 ```

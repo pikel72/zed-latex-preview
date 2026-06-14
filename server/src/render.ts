@@ -52,6 +52,15 @@ function colorFor(c: "black" | "white" | "auto"): string {
   return "currentColor";  // inherits from CSS (respects light / dark theme)
 }
 
+/** Rewrite one `width`/`height="…ex"` SVG attribute into `px`, applying
+ *  `exPx` and an anti‑clip padding of 8 px. */
+const PAD = 8;
+function exToPx(svg: string, attr: "width" | "height", exPx: number): string {
+  const re = new RegExp(`\\b${attr}="([\\d.]+)ex"`);
+  return svg.replace(re, (_full, v: string) =>
+    `${attr}="${Math.round(Number(v) * exPx) + PAD}px"`);
+}
+
 // ── public API ─────────────────────────────────────────────────────────
 
 export interface RenderRequest {
@@ -82,21 +91,23 @@ export async function render(req: RenderRequest): Promise<RenderResult> {
     const m = html.match(/<svg[\s\S]*?<\/svg>/);
     if (!m) throw new Error("no svg produced");
 
-    // MathJax error markers — surface as errors so the hover shows a
-    // readable TeX fallback instead of garbled / red‑text SVG.
-    if (m[0].includes("data-mjx-error") || m[0].includes('fill="red"')) {
+    // MathJax surfaces two kinds of error.  Hard parse failures get a
+    // `data-mjx-error` attribute; undefined commands are rendered as a red
+    // `<mtext>` node spelling out the unknown macro name.  We detect both so
+    // the hover can fall back to showing the raw TeX source.
+    if (m[0].includes("data-mjx-error") || m[0].includes('mtext" fill="red"')) {
       throw new Error("mathjax parse error");
     }
 
     // Inject colour attribute onto the root <svg>.
     let svg = m[0].replace(/<svg([^>]*)>/, `<svg$1 color="${colorFor(req.color)}">`);
 
-    // Convert CSS `ex` → explicit `px` so the image renders at the
-    // intended size regardless of the context it is placed in.
+    // Convert CSS `ex` → explicit `px` so the image renders at the intended
+    // size regardless of the context it is placed in.  A small padding avoids
+    // clipping anti‑aliased glyph edges.
     const exPx = DEFAULT_EX * req.scale;
-    const PAD = 8;   // anti‑clip padding
-    svg = svg.replace(/\bwidth="([\d.]+)ex"/,  (_, w) => `width="${Math.round(Number(w) * exPx) + PAD}px"`);
-    svg = svg.replace(/\bheight="([\d.]+)ex"/, (_, h) => `height="${Math.round(Number(h) * exPx) + PAD}px"`);
+    svg = exToPx(svg, "width", exPx);
+    svg = exToPx(svg, "height", exPx);
 
     return svg;
   };
@@ -113,12 +124,10 @@ export async function render(req: RenderRequest): Promise<RenderResult> {
 // ── timeout wrapper ────────────────────────────────────────────────────
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`mathjax timeout after ${ms}ms`)), ms);
-    p.then(
-      v => { clearTimeout(t); resolve(v); },
-      e => { clearTimeout(t); reject(e); },
-    );
-    p.catch(() => {});
-  });
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`mathjax timeout after ${ms}ms`)), ms),
+    ),
+  ]);
 }

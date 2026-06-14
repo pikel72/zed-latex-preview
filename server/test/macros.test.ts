@@ -15,6 +15,24 @@ test("newcommand with one arg", () => {
   assert.equal(expand("\\norm{x}", m), "\\left\\lVert x \\right\\rVert");
 });
 
+test("newcommand with two args", () => {
+  const doc = "\\newcommand{\\foo}[2]{#1+#2}";
+  const m = extractMacros(doc);
+  assert.equal(expand("\\foo{a}{b}", m), "a+b");
+});
+
+test("newcommand with three args (bare-token args)", () => {
+  const doc = "\\newcommand{\\bar}[3]{#1,#2,#3}";
+  const m = extractMacros(doc);
+  assert.equal(expand("\\bar{x}{y}{z}", m), "x,y,z");
+});
+
+test("newcommand with mixed brace/bare args", () => {
+  const doc = "\\newcommand{\\baz}[2]{[#1|#2]}";
+  const m = extractMacros(doc);
+  assert.equal(expand("\\baz{a}b", m), "[a|b]");
+});
+
 test("newcommand* (starred) is recognized", () => {
   const doc = "\\newcommand*{\\R}{\\mathbb{R}}\n\\R^2";
   const m = extractMacros(doc);

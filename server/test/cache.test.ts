@@ -37,7 +37,8 @@ test("LRU caches falsy values without dropping them", () => {
 });
 
 test("LRU keyOf distinct on pipe-bearing source vs theme", () => {
-  // Without length-prefixing, these would collide: "1|t|y|2|x" and "1|t|2|x|y".
+  // JSON-stringified keys are unambiguous: a `|` in one field cannot leak
+  // into another.
   const lru = new LRU<string>(4);
   lru.set({ source: "x|y", macroBlock: "ab", theme: "t", scale: 1, display: false }, "FROM_SOURCE");
   lru.set({ source: "x", macroBlock: "ab", theme: "t|y", scale: 1, display: false }, "FROM_THEME");

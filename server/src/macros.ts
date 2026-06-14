@@ -82,8 +82,8 @@ export function mergeMacros(base: MacroMap, overrides: MacroMap): MacroMap {
  * Expand every known macro in `source`, returning the expanded LaTeX string.
  *
  * Macros without arguments are substituted via `\name\b` boundary‑match.
- * Macros with arguments honour `#1`, `#2`, … placeholders; arguments may be
- * brace‑delimited (`{arg}`) or a single non‑whitespace token (`\S`).
+ * Macros with arguments honour `#1`, `#2`, … placeholders; each argument may
+ * be brace‑delimited (`{arg}`) or a single non‑whitespace token (`\S`).
  */
 export function expand(source: string, macros: MacroMap): string {
   let out = source;
@@ -96,13 +96,22 @@ export function expand(source: string, macros: MacroMap): string {
       const re = new RegExp(`\\\\${name}\\b`, "g");
       out = out.replace(re, raw);
     } else {
-      // N‑argument macro: match \name{arg} or \name X.
-      const re = new RegExp(`\\\\${name}(?:\\{\\s*([^{}]*?)\\s*\\}|(\\S))`, "g");
-      out = out.replace(re, (_full, a, b) => {
-        const arg = a ?? b ?? "";
+      // N‑argument macro: match \name followed by N argument groups.
+      // Each group is either {arg} or a single non‑whitespace token.
+      const argPat = `(?:\\{\\s*([^{}]*)\\s*\\}|(\\S))`;
+      const re = new RegExp(`\\\\${name}${argPat.repeat(arity)}`, "g");
+      out = out.replace(re, (...args) => {
+        // Capture groups come as args[1..2*arity], paired (brace, bare).
+        const groups = args.slice(1, 1 + 2 * arity);
+        const captured: string[] = [];
+        for (let i = 0; i < arity; i++) {
+          const brace = groups[2 * i];     // brace-delimited capture
+          const bare = groups[2 * i + 1];  // single-token capture
+          captured.push(brace ?? bare ?? "");
+        }
         let body = raw;
         for (let i = 1; i <= arity; i++) {
-          body = body.replaceAll(`#${i}`, arg);
+          body = body.replaceAll(`#${i}`, captured[i - 1]);
         }
         return body;
       });

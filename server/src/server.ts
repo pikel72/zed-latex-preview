@@ -6,11 +6,10 @@
 //!                    ┌────────────────┐
 //! textDocument/      │   server.ts    │
 //! didOpen ──────────→│                │
-//! didChange ────────→│  DocumentStore │──── hoverFor() ──── HoverResult
-//! didClose ─────────→│                │
-//!                    │  preamble.ts   │──── initWorkspaceMacros()
-//!                    │                │──── updateFileMacros()
+//! didChange ────────→│  preamble.ts   │──── initWorkspaceMacros()
+//! didClose ─────────→│                │──── updateFileMacros()
 //!                    └────────────────┘
+//! textDocument/hover ─→ hover.ts ──── HoverResult
 //! ```
 //!
 //! The server responds to `textDocument/hover` requests only.  It does not
@@ -19,18 +18,17 @@
 import { createConnection, ProposedFeatures, TextDocuments, TextDocumentSyncKind } from "vscode-languageserver/node.js";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { configFromInit } from "./config.js";
-import { DocumentStore } from "./documents.js";
 import { hoverFor } from "./hover.js";
 import { initWorkspaceMacros, updateFileMacros } from "./preamble.js";
+import { invalidateScannerCache } from "./scanner.js";
 
 const connection = createConnection(ProposedFeatures.all);
 const docs = new TextDocuments(TextDocument);
-const store = new DocumentStore();
 
-let cfg = configFromInit(process.env.LATEX_PREVIEW_INIT);
+let cfg = configFromInit(undefined);
 
 connection.onInitialize((params) => {
-  cfg = configFromInit(params.initializationOptions ?? process.env.LATEX_PREVIEW_INIT);
+  cfg = configFromInit(params.initializationOptions);
   // Auto‑discover \def, \newcommand etc. from every .tex file in the
   // workspace.  Subsequent didOpen/didChange calls keep per‑file caches
   // up to date.
@@ -46,18 +44,17 @@ connection.onInitialize((params) => {
 // ══ document sync ══════════════════════════════════════════════════════
 
 docs.onDidOpen((change) => {
-  store.open(change.document.uri, change.document.getText());
   updateFileMacros(change.document.uri, change.document.getText());
 });
 
 docs.onDidChangeContent((change) => {
-  store.change(change.document.uri, change.document.getText());
   updateFileMacros(change.document.uri, change.document.getText());
 });
 
-docs.onDidClose((change) => {
-  store.close(change.document.uri);
-  // Macros from closed files are kept — the user may reopen later.
+docs.onDidClose(() => {
+  // Drop the cached tokeniser spans so closed buffers don't hold memory.
+  // The macro cache in preamble.ts is retained (re-opening is cheap there).
+  invalidateScannerCache();
 });
 
 docs.listen(connection);
@@ -65,7 +62,8 @@ docs.listen(connection);
 // ══ hover ══════════════════════════════════════════════════════════════
 
 connection.onHover((params) => {
-  const text = store.get(params.textDocument.uri);
+  const doc = docs.get(params.textDocument.uri);
+  const text = doc?.getText();
   if (!text) return null;
   return hoverFor(text, params.position, cfg);
 });

@@ -1,9 +1,9 @@
 //! LRU render‑result cache.
 //!
-//! Caching is keyed by a 7‑tuple combining display mode, scale, colour
-//! theme, macro set (both key names and their bodies), and the fully
-//! expanded LaTeX source.  The key is length‑prefixed so that adjacent
-//! string fields containing the pipe character (`|`) cannot collide.
+//! Caching is keyed by a tuple of display mode, scale, colour theme, the
+//! merged macro set, and the fully expanded LaTeX source.  The key is
+//! JSON‑serialised, so any field containing the same characters as another
+//! cannot collide.
 //!
 //! ## Capacity
 //!
@@ -47,17 +47,9 @@ export class LRU<V> {
     }
   }
 
-  // ── key serialisation ────────────────────────────────────────────────
-  // Length‑prefix each string field so that `source` / `theme` / etc.
-  // containing `|` cannot collide with adjacent fields.
-
+  // `JSON.stringify` of a fixed-shape object is unambiguous, so no field
+  // can bleed into another regardless of its contents.
   private keyOf(k: CacheKey): string {
-    return [
-      k.display,
-      k.scale,
-      k.theme.length, k.theme,
-      k.macroBlock.length, k.macroBlock,
-      k.source.length, k.source,
-    ].join("|");
+    return JSON.stringify([k.display, k.scale, k.theme, k.macroBlock, k.source]);
   }
 }

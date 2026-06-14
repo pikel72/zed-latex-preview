@@ -6,5 +6,8 @@ target/
 node_modules/
 server/out/
 
+# Local agent / tooling state
+.claude/
+
 # OS noise
 **/.DS_Store

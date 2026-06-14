@@ -1,30 +1,18 @@
 //! # LaTeX Preview — Math hover for Zed
 //!
-//! A companion extension for the official [LaTeX extension][tex].
-//! It registers a second language server (`latex-preview`) that renders LaTeX
-//! math formulas as SVG tooltips on hover.
+//! Companion extension for the official [LaTeX extension][tex].  Registers a
+//! second language server (`latex-preview`) that renders LaTeX math formulas
+//! as SVG tooltips on hover.
 //!
-//! The LSP is a bundled Node.js server (under `server/`) that uses MathJax
-//! for TeX → SVG rendering.  The Rust side only handles LSP discovery and
-//! hands off workspace configuration to the server.
-//!
-//! ## Architecture
-//!
-//! ```text
-//! Zed                                   Rust stub (this crate)
-//!  │                                          │
-//!  ├─ latex (texlab) ─── completions/diag     │  official extension
-//!  │                                          │
-//!  └─ latex-preview ─── hover tooltips        │  this extension
-//!       │                                      │
-//!       └─ Node.js LSP  ─── MathJax ── SVG     │  server/out/src/server.js
-//! ```
-//!
-//! [tex]: https://github.com/rzukic/zed-latex
+//! The LSP itself is a bundled Node.js server (under `server/`) using MathJax
+//! for TeX → SVG.  This Rust stub only resolves the launch command and forwards
+//! the user's `lsp.latex-preview.settings` to the server as LSP
+//! `initializationOptions`.
 //!
 //! ## Configuration
 //!
-//! All settings live under `"lsp"."latex-preview"` in Zed's `settings.json`:
+//! All settings live under `"lsp"."latex-preview"."settings"` in Zed's
+//! `settings.json`:
 //!
 //! | Key | Type | Default | Description |
 //! |-----|------|---------|-------------|
@@ -34,13 +22,13 @@
 //! | `scale` | `f64` | `1.4` | SVG scale multiplier |
 //! | `color` | `str` | `"auto"` | `"auto"`, `"black"`, or `"white"` |
 
-mod preview_lsp_invocation;
-mod preview_lsp_workspace_config;
-
 use zed_extension_api::{self as zed};
 
 #[derive(Default)]
 struct LatexPreviewExtension;
+
+/// Server name as registered in `extension.toml`.
+const SERVER: &str = "latex-preview";
 
 impl zed::Extension for LatexPreviewExtension {
     fn new() -> Self {
@@ -52,38 +40,85 @@ impl zed::Extension for LatexPreviewExtension {
     /// Resolution order:
     /// 1. User-provided `lsp.latex-preview.binary.path` setting
     /// 2. `latex-preview-lsp` binary on `PATH`
-    /// 3. Bundled `server/out/src/server.js` run via Node.js
+    /// 3. Bundled `server/out/src/server.js` run via Node
     fn language_server_command(
         &mut self,
         language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
-        match language_server_id.as_ref() {
-            "latex-preview" => preview_lsp_invocation::command(worktree),
-            id => Err(format!("unknown language server: {id}")),
+        if language_server_id.as_ref() != SERVER {
+            return Err(format!("unknown language server: {language_server_id}"));
         }
+
+        let lsp = zed::settings::LspSettings::for_worktree(SERVER, worktree).unwrap_or_default();
+        let extra_args = match lsp.binary {
+            Some(ref b) => b.arguments.clone().unwrap_or_default(),
+            None => Vec::new(),
+        };
+
+        // 1. Explicit path from settings.
+        if let Some(ref b) = lsp.binary {
+            if let Some(ref path) = b.path {
+                return Ok(zed::Command {
+                    command: path.clone(),
+                    args: extra_args,
+                    env: Default::default(),
+                });
+            }
+        }
+
+        // 2. Standalone binary on PATH.
+        if let Some(cmd) = worktree.which("latex-preview-lsp") {
+            return Ok(zed::Command {
+                command: cmd,
+                args: extra_args,
+                env: Default::default(),
+            });
+        }
+
+        // 3. Bundled Node.js server.
+        if let Some(node) = worktree.which("node") {
+            // Zed sets PWD to `{extensions}/work/{ext_id}`, but for dev
+            // extensions that directory is empty — the real files live at the
+            // source, reachable via a symlink at
+            // `{extensions}/installed/{ext_id}`.  Rewrite "work" → "installed"
+            // so the resolved path follows the symlink to the real dir.
+            // (WASI has no canonicalize(), so we rewrite the string by hand.)
+            let pwd = std::env::var("PWD").unwrap_or_default();
+            let dir = pwd
+                .replace("\\work\\", "\\installed\\")
+                .replace("/work/", "/installed/");
+            let mut args = vec![
+                format!("{}/server/out/src/server.js", dir.trim_end_matches('/')),
+                "--stdio".to_string(),
+            ];
+            args.extend(extra_args);
+            return Ok(zed::Command {
+                command: node,
+                args,
+                env: Default::default(),
+            });
+        }
+
+        Err("latex-preview: neither `latex-preview-lsp` nor `node` found on PATH".into())
     }
 
-    /// Forward user settings (`lsp.latex-preview.settings`) to the LSP as
-    /// workspace configuration.
-    fn language_server_workspace_configuration(
+    /// Forward `lsp.latex-preview.settings` to the LSP as
+    /// `initializationOptions`.  The server reads these via its
+    /// `onInitialize` handler.
+    fn language_server_initialization_options(
         &mut self,
         language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> zed::Result<Option<zed::serde_json::Value>> {
-        match language_server_id.as_ref() {
-            "latex-preview" => {
-                let settings = zed::settings::LspSettings::for_worktree(
-                    "latex-preview",
-                    worktree,
-                )
-                .ok()
-                .and_then(|lsp| lsp.settings.clone())
-                .unwrap_or_default();
-                Ok(preview_lsp_workspace_config::get(settings))
-            }
-            _ => Ok(None),
+        if language_server_id.as_ref() != SERVER {
+            return Ok(None);
         }
+        let settings = zed::settings::LspSettings::for_worktree(SERVER, worktree)
+            .ok()
+            .and_then(|lsp| lsp.settings)
+            .unwrap_or_default();
+        Ok(Some(settings))
     }
 }
 

@@ -1,9 +1,8 @@
 //! User‑facing configuration (from Zed's `lsp.latex-preview.settings`).
 //!
-//! Settings are serialised as JSON by the Rust side of the extension and
-//! forwarded to the LSP via workspace configuration.  This module defines
-//! the TypeScript shape and a `configFromInit` factory that fills defaults
-//! for any missing keys.
+//! Settings are forwarded to the LSP as `initializationOptions` by the Rust
+//! side of the extension.  This module defines the TypeScript shape and a
+//! `configFromInit` factory that fills defaults for any missing keys.
 
 export interface PreviewConfig {
   enabled: boolean;
@@ -12,10 +11,6 @@ export interface PreviewConfig {
   scale: number;
   color: "auto" | "black" | "white";
   renderer: "mathjax";
-  /** User‑supplied preamble file paths (relative to workspace root).
-   *  Kept for backward compatibility but no longer required — workspace
-   *  macros are auto‑discovered. */
-  preamble: string[];
 }
 
 export function defaultConfig(): PreviewConfig {
@@ -26,19 +21,7 @@ export function defaultConfig(): PreviewConfig {
     scale: 1.4,
     color: "auto",
     renderer: "mathjax",
-    preamble: [],
   };
-}
-
-function normalizePreamble(v: unknown): string[] {
-  if (!v) return [];
-  if (typeof v === "string") {
-    return v.split(/[;,]/).map(s => s.trim()).filter(Boolean);
-  }
-  if (Array.isArray(v)) {
-    return v.filter((x): x is string => typeof x === "string");
-  }
-  return [];
 }
 
 /** Build a `PreviewConfig` from the opaque `initializationOptions` blob
@@ -54,6 +37,5 @@ export function configFromInit(initializationOptions: unknown): PreviewConfig {
   if (typeof o.scale === "number") cfg.scale = o.scale;
   if (o.color === "auto" || o.color === "black" || o.color === "white") cfg.color = o.color;
   if (o.renderer === "mathjax") cfg.renderer = o.renderer;
-  if (o.preamble !== undefined) cfg.preamble = normalizePreamble(o.preamble);
   return cfg;
 }

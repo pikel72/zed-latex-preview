@@ -84,11 +84,9 @@ function scan(root: string): void {
   workspaceRoot = root;
   fileCache.clear();
 
-  const files = findTexFiles(root);
-  for (const abs of files) {
+  for (const abs of collectTexFiles(root)) {
     try {
-      const text = fs.readFileSync(abs, "utf-8");
-      fileCache.set(abs, extractMacros(text));
+      fileCache.set(abs, extractMacros(fs.readFileSync(abs, "utf-8")));
     } catch {
       // File disappeared / permission denied — skip silently.
     }
@@ -98,42 +96,37 @@ function scan(root: string): void {
 
 // ── file‑system helpers ────────────────────────────────────────────────
 
-/** Return absolute paths of every `*.tex` file under `dir` (recursive). */
-function findTexFiles(dir: string): string[] {
-  const out: string[] = [];
-  walk(dir, out, 0);
-  return out;
-}
-
 /** Directories that are never worth scanning. */
 const SKIP_DIRS = new Set([
   "node_modules", ".git", "texghost", "out", "target", "dist", "__pycache__",
 ]);
 
-/** Depth‑limited recursive walk. */
-function walk(dir: string, out: string[], depth: number): void {
-  if (depth > 20) return;
+/** Recursively collect every `*.tex` file under `dir` (depth‑limited, skips
+ *  noise dirs and dot‑dirs).  Errors reading a directory are swallowed. */
+function collectTexFiles(dir: string, depth = 0, out: string[] = []): string[] {
+  if (depth > 20) return out;
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
-    return; // permission error
+    return out; // permission error
   }
   for (const e of entries) {
     if (e.isDirectory()) {
       if (SKIP_DIRS.has(e.name)) continue;
       if (e.name.startsWith(".") && e.name.length > 1) continue;  // .hidden
-      walk(path.join(dir, e.name), out, depth + 1);
+      collectTexFiles(path.join(dir, e.name), depth + 1, out);
     } else if (e.isFile() && e.name.endsWith(".tex")) {
       out.push(path.join(dir, e.name));
     }
   }
+  return out;
 }
 
 function hasTexFiles(dir: string): boolean {
   try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    return entries.some(e => e.isFile() && e.name.endsWith(".tex"));
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .some(e => e.isFile() && e.name.endsWith(".tex"));
   } catch {
     return false;
   }

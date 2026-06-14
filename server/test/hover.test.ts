@@ -9,7 +9,6 @@ const cfg = {
   scale: 1.4,
   color: "auto" as const,
   renderer: "mathjax" as const,
-  preamble: [] as string[],
 };
 
 test("hover on $E=mc^2$ returns markdown image", async () => {

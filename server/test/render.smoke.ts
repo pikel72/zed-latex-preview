@@ -75,10 +75,24 @@ test("timeout path returns error with 'timeout'", async () => {
 });
 
 test("undefined command returns error (no garbled SVG)", async () => {
-  // \eps is not a standard LaTeX command.  MathJax renders it in red, which
-  // we treat as an error so the hover shows a readable TeX fallback instead
-  // of a garbled formula with red error text.
-  const r = await render({ source: "\\eps", display: false, scale: 1, color: "auto", timeoutMs: 5000 });
+  // \zzznotacommand is genuinely undefined.  MathJax renders it as a red
+  // `<mtext>` spelling out the macro name — we detect that pattern and treat
+  // it as an error so the hover shows a readable TeX fallback instead of a
+  // garbled formula with red error text.
+  const r = await render({ source: "\\zzznotacommand", display: false, scale: 1, color: "auto", timeoutMs: 5000 });
   assert.equal(r.ok, false);
   assert.match(r.error, /mathjax parse error/);
+});
+
+test("explicitly red text renders successfully (not mistaken for error)", async () => {
+  // Regression: a formula using \textcolor{red}{...} legitimately produces
+  // an SVG containing fill="red" on an `mstyle` node.  This must NOT be
+  // mistaken for an undefined-command error (which carries red on `mtext`).
+  // Requires the color/xcolor package, which AllPackages includes.
+  const r = await render({
+    source: "\\textcolor{red}{\\alpha}",
+    display: false, scale: 1, color: "auto", timeoutMs: 5000,
+  });
+  assert.equal(r.ok, true);
+  if (r.ok) assert.match(r.svg, /<svg/);
 });
