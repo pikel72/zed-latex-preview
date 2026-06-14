@@ -41,7 +41,7 @@ All settings live under `"lsp"."latex-preview"."settings"`:
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | When `false`, no hover previews are shown |
 | `scale` | `number` | `1.4` | SVG size multiplier (> 1 = larger) |
-| `color` | `"auto"` \| `"black"` \| `"white"` | `"auto"` | SVG text colour |
+| `color` | `"auto"` \| `"black"` \| `"white"` | `"auto"` | SVG text colour. `auto` renders black — **dark-theme users should set `"white"`** |
 | `timeoutMs` | `number` | `1500` | Maximum time (ms) spent rendering a formula |
 | `maxFormulaLength` | `number` | `2000` | Skip formulas whose TeX source exceeds this |
 

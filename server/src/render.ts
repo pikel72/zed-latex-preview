@@ -88,7 +88,12 @@ export async function render(req: RenderRequest): Promise<RenderResult> {
       containerWidth: 1200 * req.scale,
     });
     const html = adaptor.outerHTML(node);
-    const m = html.match(/<svg[\s\S]*?<\/svg>/);
+    // MathJax output: <mjx-container><svg>...</svg></mjx-container>.
+    // The SVG may contain *nested* <svg> elements (e.g. stretchy delimiters
+    // like \left\|...\right\|), so a non-greedy /<svg.*?<\/svg>/ would stop
+    // at the inner </svg> and truncate the root.  Match from the first <svg>
+    // to the LAST </svg> instead.
+    const m = html.match(/<svg[\s\S]*<\/svg>/);
     if (!m) throw new Error("no svg produced");
 
     // MathJax surfaces two kinds of error.  Hard parse failures get a
