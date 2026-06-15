@@ -12,10 +12,10 @@
 //! Results are cached per (expanded source, macro set, theme, scale,
 //! display‑mode) key.
 
-import { findMathAt, type Position } from "./scanner.js";
+import { findMathAt, positionToOffset, type Position } from "./scanner.js";
 import { extractMacros, expand, mergeMacros, type MacroMap } from "./macros.js";
 import { render } from "./render.js";
-import { LRU, type CacheKey } from "./cache.js";
+import { LRU, memoizeByText, type CacheKey } from "./cache.js";
 import type { PreviewConfig } from "./config.js";
 import { getWorkspaceMacros } from "./preamble.js";
 
@@ -31,15 +31,8 @@ const cache = new LRU<{ ok: true; dataUri: string } | { ok: false; error: string
 // ── per‑document macro cache ───────────────────────────────────────────
 // Avoids re‑scanning the full document text for macros on every hover.
 
-let docCacheText: string | undefined;
-let docCacheMacros: MacroMap | undefined;
-
-function getDocMacros(text: string): MacroMap {
-  if (docCacheText === text && docCacheMacros !== undefined) return docCacheMacros;
-  docCacheText = text;
-  docCacheMacros = extractMacros(text);
-  return docCacheMacros;
-}
+const docMacrosCache = memoizeByText(extractMacros);
+const getDocMacros = docMacrosCache.get;
 
 // ── helpers ────────────────────────────────────────────────────────────
 
@@ -116,13 +109,5 @@ export async function hoverFor(
 }
 
 // ── cursor‑to‑offset conversion ────────────────────────────────────────
-
-function positionToOffset(text: string, pos: Position): number {
-  let line = 0, ch = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "\r") continue;        // LSP positions exclude \r (mirror scanner.ts offsetToPosition)
-    if (line === pos.line && ch === pos.character) return i;
-    if (text[i] === "\n") { line++; ch = 0; } else ch++;
-  }
-  return text.length;
-}
+// Imported from scanner.ts so both directions share a single CRLF-aware
+// implementation.

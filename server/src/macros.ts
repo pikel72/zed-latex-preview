@@ -32,7 +32,8 @@
 //! handle arbitrary nesting, so this module walks the source with an
 //! explicit brace counter for bodies and arguments.
 
-export type MacroMap = Record<string, string>;
+export interface MacroDef { body: string; arity: number; }
+export type MacroMap = Record<string, MacroDef>;
 
 // ── defining‑command whitelist ─────────────────────────────────────────
 // Order matters: the longer / starred forms must be tried before their
@@ -144,8 +145,7 @@ export function extractMacros(text: string): MacroMap {
           if (def.cmd === "DeclareMathOperator") {
             bodyStr = `\\operatorname{${bodyStr}}`;
           }
-          out[def.name] = bodyStr;
-          out[`__arity__${def.name}`] = String(def.arity);
+          out[def.name] = { body: bodyStr, arity: def.arity };
           i = body.end;
           continue;
         }
@@ -194,9 +194,8 @@ function readArg(src: string, at: number): { arg: string; end: number } | null {
  */
 export function expand(source: string, macros: MacroMap): string {
   let out = source;
-  for (const [name, raw] of Object.entries(macros)) {
-    if (name.startsWith("__arity__")) continue;
-    const arity = Number(macros[`__arity__${name}`] ?? "0");
+  for (const [name, def] of Object.entries(macros)) {
+    const { body: raw, arity } = def;
     const head = `\\${name}`;
 
     // Walk the source left-to-right, replacing each occurrence.  Using a

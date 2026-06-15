@@ -32,6 +32,14 @@ import { AllPackages } from "mathjax-full/js/input/tex/AllPackages.js";
 
 const DEFAULT_EM = 16;      // CSS px per em at scale = 1
 const DEFAULT_EX = 8;       // CSS px per ex (typically em / 2)
+const PAD_PX = 8;           // anti‑clip padding added after ex→px conversion
+
+// MathJax surfaces two kinds of error inside the produced SVG:
+//   • `data-mjx-error` attribute on a node for hard parse failures,
+//   • a red-coloured <mtext> for undefined commands.
+// We detect both so the hover can fall back to showing the raw TeX source.
+const MJX_ERROR_ATTR = "data-mjx-error";
+const RED_MTEXT_MARKER = 'mtext" fill="red"';
 
 const adaptor = liteAdaptor();             // lightweight DOM adaptor (no browser)
 RegisterHTMLHandler(adaptor);
@@ -53,14 +61,13 @@ function colorFor(c: "black" | "white" | "auto"): string {
 }
 
 /** Rewrite every `width`/`height="…ex"` SVG attribute into `px`, applying
- *  `exPx` and an anti‑clip padding of 8 px.  The global flag is needed
- *  because MathJax's stretchy delimiters emit nested `<svg>` elements
- *  each carrying their own `width`/`height` in `ex` units. */
-const PAD = 8;
+ *  `exPx` plus an anti‑clip padding.  The global flag is needed because
+ *  MathJax's stretchy delimiters emit nested `<svg>` elements each
+ *  carrying their own `width`/`height` in `ex` units. */
+const EX_RE = /\b(width|height)="([\d.]+)ex"/g;
 function exToPx(svg: string, attr: "width" | "height", exPx: number): string {
-  const re = new RegExp(`\\b${attr}="([\\d.]+)ex"`, "g");
-  return svg.replace(re, (_full, v: string) =>
-    `${attr}="${Math.round(Number(v) * exPx) + PAD}px"`);
+  return svg.replace(EX_RE, (full, kind: string, v: string) =>
+    kind === attr ? `${attr}="${Math.round(Number(v) * exPx) + PAD_PX}px"` : full);
 }
 
 // ── public API ─────────────────────────────────────────────────────────
@@ -102,7 +109,7 @@ export async function render(req: RenderRequest): Promise<RenderResult> {
     // `data-mjx-error` attribute; undefined commands are rendered as a red
     // `<mtext>` node spelling out the unknown macro name.  We detect both so
     // the hover can fall back to showing the raw TeX source.
-    if (m[0].includes("data-mjx-error") || m[0].includes('mtext" fill="red"')) {
+    if (m[0].includes(MJX_ERROR_ATTR) || m[0].includes(RED_MTEXT_MARKER)) {
       throw new Error("mathjax parse error");
     }
 

@@ -88,11 +88,10 @@ function ensureScanned(root: string): void {
 function inferProjectRoot(filePath: string): string | null {
   let dir = path.dirname(filePath);
   if (!hasTexFiles(dir)) return null;
-  for (;;) {
-    const parent = path.dirname(dir);
-    if (parent === dir || !hasTexFiles(parent)) return dir;
+  for (let parent = path.dirname(dir); parent !== dir && hasTexFiles(parent); parent = path.dirname(parent)) {
     dir = parent;
   }
+  return dir;
 }
 
 /** True when `maybeAncestor` is `dir` itself or a parent directory of it. */

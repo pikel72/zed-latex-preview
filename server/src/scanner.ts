@@ -25,6 +25,8 @@
 //! Escapes (`\$`), comments (`%`), and verbatim environments are recognised
 //! so delimiters inside them do not toggle math mode.
 
+import { memoizeByText } from "./cache.js";
+
 export interface Position { line: number; character: number }
 export interface Range { start: Position; end: Position }
 export interface MathRegion { source: string; range: Range; display: boolean }
@@ -54,20 +56,11 @@ const VERBATIM_ENVS = new Set(["verbatim", "lstlisting", "minted"]);
 
 // ── span cache (per text) ──────────────────────────────────────────────
 
-let cacheText: string | undefined;
-let cacheSpans: MathSpan[] | undefined;
-
-function getSpans(text: string): MathSpan[] {
-  if (cacheText === text && cacheSpans !== undefined) return cacheSpans;
-  cacheText = text;
-  cacheSpans = tokenize(text);
-  return cacheSpans;
-}
+const spanCache = memoizeByText(tokenize);
 
 /** Drop the cached spans (e.g. when a document is closed). */
 export function invalidateScannerCache(): void {
-  cacheText = undefined;
-  cacheSpans = undefined;
+  spanCache.invalidate();
 }
 
 // ── low-level helpers ──────────────────────────────────────────────────
@@ -94,6 +87,13 @@ function readEnvTag(src: string, at: number, kind: "begin" | "end"):
   return { name: src.slice(i + 1, nameEnd), tagEnd: nameEnd + 1 };
 }
 
+/** Skip from `from` to just past the next `\n` (or to end of text).
+ *  Used to consume `%…\n` comments. */
+function skipToEOL(text: string, from: number): number {
+  const nl = text.indexOf("\n", from);
+  return nl < 0 ? text.length : nl + 1;
+}
+
 /**
  * Find the next dollar closer from `from` onward, skipping escapes,
  * comments, and (when `wantDouble` is false) `$$` pairs.
@@ -103,11 +103,7 @@ function findCloser(text: string, from: number, wantDouble: boolean): number {
   for (let i = from; i < text.length; i++) {
     const ch = text[i];
     if (ch === "\\") { i++; continue; }            // skip escaped char
-    if (ch === "%") {                               // skip to EOL
-      const nl = text.indexOf("\n", i);
-      i = nl < 0 ? text.length : nl;
-      continue;
-    }
+    if (ch === "%") { i = skipToEOL(text, i); continue; }  // comment
     if (ch === "$") {
       const isDouble = text[i + 1] === "$";
       if (wantDouble) { if (isDouble) return i; }
@@ -134,8 +130,7 @@ function tokenize(text: string): MathSpan[] {
 
     // 1. Comment to end of line.
     if (ch === "%" && !isEscaped(text, i)) {
-      const nl = text.indexOf("\n", i + 1);
-      i = nl < 0 ? n : nl + 1;
+      i = skipToEOL(text, i + 1);
       continue;
     }
 
@@ -159,23 +154,18 @@ function tokenize(text: string): MathSpan[] {
       }
     }
 
-    // 3. `$$...$$` display math (check before single `$`).
-    if (ch === "$" && !isEscaped(text, i) && text[i + 1] === "$") {
-      const close = findCloser(text, i + 2, true);
-      push(i, close < 0 ? n : close + 2, i + 2, close < 0 ? n : close, true);
-      i = close < 0 ? n : close + 2;
-      continue;
-    }
-
-    // 4. `$...$` inline math.
+    // 3. `$...$` (inline) and `$$...$$` (display) — handled together since
+    //    the shape is identical apart from the delimiter width.
     if (ch === "$" && !isEscaped(text, i)) {
-      const close = findCloser(text, i + 1, false);
-      push(i, close < 0 ? n : close + 1, i + 1, close < 0 ? n : close, false);
-      i = close < 0 ? n : close + 1;
+      const isDouble = text[i + 1] === "$";
+      const w = isDouble ? 2 : 1;
+      const close = findCloser(text, i + w, isDouble);
+      push(i, close < 0 ? n : close + w, i + w, close < 0 ? n : close, isDouble);
+      i = close < 0 ? n : close + w;
       continue;
     }
 
-    // 5. `\( ... \)` inline and `\[ ... \]` display math.
+    // 4. `\( ... \)` inline and `\[ ... \]` display math.
     if (ch === "\\" && (text[i + 1] === "(" || text[i + 1] === "[") && !isEscaped(text, i)) {
       const display = text[i + 1] === "[";
       const closeDelim = display ? "\\]" : "\\)";
@@ -203,7 +193,7 @@ function tokenize(text: string): MathSpan[] {
  */
 export function findMathAt(text: string, offset: number, opts: ScanOptions = {}): MathRegion | null {
   const max = opts.maxFormulaLength ?? 2000;
-  for (const s of getSpans(text)) {
+  for (const s of spanCache.get(text)) {
     if (offset >= s.openDelim && offset < s.endDelim) {
       if (s.source.length > max) return null;
       return {
@@ -219,16 +209,29 @@ export function findMathAt(text: string, offset: number, opts: ScanOptions = {})
   return null;
 }
 
-// ── offset → position ──────────────────────────────────────────────────
+// ── offset ↔ position ──────────────────────────────────────────────────
 
 /** Convert a byte offset to a 0-based line+character position.
  *  `\r` is not counted as a character (LSP positions exclude line terminators),
  *  so CRLF documents don't cause drift. */
-function offsetToPosition(text: string, offset: number): Position {
+export function offsetToPosition(text: string, offset: number): Position {
   let line = 0, ch = 0;
   for (let i = 0; i < offset && i < text.length; i++) {
     if (text[i] === "\r") continue;
     if (text[i] === "\n") { line++; ch = 0; } else ch++;
   }
   return { line, character: ch };
+}
+
+/** Inverse of `offsetToPosition` — convert a 0-based LSP position to a
+ *  byte offset in `text`.  Returns `text.length` when the position is past
+ *  the end.  Same `\r` skip semantics as `offsetToPosition`. */
+export function positionToOffset(text: string, pos: Position): number {
+  let line = 0, ch = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\r") continue;        // LSP positions exclude \r
+    if (line === pos.line && ch === pos.character) return i;
+    if (text[i] === "\n") { line++; ch = 0; } else ch++;
+  }
+  return text.length;
 }

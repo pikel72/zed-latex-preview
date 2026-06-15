@@ -34,7 +34,8 @@ test("preamble: macro from a sibling file at the project root is discovered", ()
     // the file's own location, not the true project root.
     updateFileMacros(uri(ch1), fs.readFileSync(ch1, "utf-8"));
     const macros = getWorkspaceMacros();
-    assert.equal(macros.O, "\\Omega", "\\O should be discovered from sibling macros.tex");
+    assert.deepEqual(macros.O, { body: "\\Omega", arity: 0 },
+      "\\O should be discovered from sibling macros.tex");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -56,7 +57,8 @@ test("preamble: a wrong rootUri from onInitialize is widened on didOpen", () => 
     const func = path.join(root, "content", "functional.tex");
     updateFileMacros(uri(func), fs.readFileSync(func, "utf-8"));
     macros = getWorkspaceMacros();
-    assert.equal(macros.O, "\\Omega", "didOpen should widen the root and find \\O");
+    assert.deepEqual(macros.O, { body: "\\Omega", arity: 0 },
+      "didOpen should widen the root and find \\O");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -74,7 +76,7 @@ test("preamble: re‑scan is not triggered when root stays the same", () => {
     updateFileMacros(uri(a), fs.readFileSync(a, "utf-8"));
     updateFileMacros(uri(b), fs.readFileSync(b, "utf-8"));
     const macros = getWorkspaceMacros();
-    assert.equal(macros.X, "x");
+    assert.deepEqual(macros.X, { body: "x", arity: 0 });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

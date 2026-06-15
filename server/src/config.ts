@@ -4,13 +4,16 @@
 //! side of the extension.  This module defines the TypeScript shape and a
 //! `configFromInit` factory that fills defaults for any missing keys.
 
+export type ColorMode = "auto" | "black" | "white";
+export type Renderer = "mathjax";
+
 export interface PreviewConfig {
   enabled: boolean;
   maxFormulaLength: number;
   timeoutMs: number;
   scale: number;
-  color: "auto" | "black" | "white";
-  renderer: "mathjax";
+  color: ColorMode;
+  renderer: Renderer;
 }
 
 export function defaultConfig(): PreviewConfig {
@@ -29,13 +32,31 @@ export function defaultConfig(): PreviewConfig {
  *  keys fall back to `defaultConfig()`. */
 export function configFromInit(initializationOptions: unknown): PreviewConfig {
   const cfg = defaultConfig();
-  if (!initializationOptions || typeof initializationOptions !== "object") return cfg;
-  const o = initializationOptions as Record<string, unknown>;
-  if (typeof o.enabled === "boolean") cfg.enabled = o.enabled;
-  if (typeof o.maxFormulaLength === "number") cfg.maxFormulaLength = o.maxFormulaLength;
-  if (typeof o.timeoutMs === "number") cfg.timeoutMs = o.timeoutMs;
-  if (typeof o.scale === "number") cfg.scale = o.scale;
-  if (o.color === "auto" || o.color === "black" || o.color === "white") cfg.color = o.color;
-  if (o.renderer === "mathjax") cfg.renderer = o.renderer;
+  const o = initObject(initializationOptions);
+  if (!o) return cfg;
+  cfg.enabled    = pick(o, "enabled",    isBool,   cfg.enabled);
+  cfg.scale      = pick(o, "scale",      isNumber, cfg.scale);
+  cfg.color      = pick(o, "color",      isColor,  cfg.color);
+  cfg.timeoutMs  = pick(o, "timeoutMs",  isNumber, cfg.timeoutMs);
+  cfg.maxFormulaLength = pick(o, "maxFormulaLength", isNumber, cfg.maxFormulaLength);
+  cfg.renderer   = pick(o, "renderer",   isRenderer, cfg.renderer);
   return cfg;
+}
+
+// ── guards + helpers ──────────────────────────────────────────────────
+
+function isBool(v: unknown): v is boolean { return typeof v === "boolean"; }
+function isNumber(v: unknown): v is number { return typeof v === "number"; }
+function isColor(v: unknown): v is ColorMode {
+  return v === "auto" || v === "black" || v === "white";
+}
+function isRenderer(v: unknown): v is Renderer { return v === "mathjax"; }
+
+function initObject(v: unknown): Record<string, unknown> | null {
+  if (!v || typeof v !== "object") return null;
+  return v as Record<string, unknown>;
+}
+
+function pick<T>(o: Record<string, unknown>, k: string, guard: (v: unknown) => v is T, fallback: T): T {
+  return guard(o[k]) ? o[k] : fallback;
 }

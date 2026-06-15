@@ -53,3 +53,29 @@ export class LRU<V> {
     return JSON.stringify([k.display, k.scale, k.theme, k.macroBlock, k.source]);
   }
 }
+
+/** Single-slot memoiser keyed on the input text.  Recomputes on text
+ *  change (string-identity compare).  `invalidate()` forces the next call
+ *  to recompute — useful when the document is closed.
+ *
+ *  Caveat: the cache short-circuits when `lastValue` is `undefined`, so
+ *  `compute` must not return `undefined` for a valid input. */
+export function memoizeByText<T>(compute: (text: string) => T): {
+  get: (text: string) => T;
+  invalidate: () => void;
+} {
+  let lastText: string | undefined;
+  let lastValue: T | undefined;
+  return {
+    get(text: string): T {
+      if (lastText === text && lastValue !== undefined) return lastValue;
+      lastText = text;
+      lastValue = compute(text);
+      return lastValue;
+    },
+    invalidate(): void {
+      lastText = undefined;
+      lastValue = undefined;
+    },
+  };
+}
