@@ -6,6 +6,9 @@
 //!
 //!   * `cite`  — inside a `\cite{…}` argument
 //!   * `ref`   — inside a `\ref`/`\eqref`/`\cref`/… argument
+//!   * `doc`   — on a `\usepackage{<name>}` argument, a bare command name
+//!               (e.g. `\textbf`), or the env name in `\begin{…}` / `\end{…}`
+//!               when that name is in the bundled dictionary
 //!   * `math`  — inside any math region (inline `$…$`, `\(…\)`, `\[…\]`,
 //!               `$$…$$`, or a `equation`/`align`/… environment)
 //!   * `none`  — none of the above
@@ -20,7 +23,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CursorContext {
-    /// `"cite" | "ref" | "math" | "none"`.
+    /// `"cite" | "ref" | "math" | "doc" | "none"`.
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
@@ -82,6 +85,176 @@ pub fn detect_cite_at(text: &str, offset: usize) -> Option<(String, [usize; 2])>
 /// Like `detect_cite_at` but for any of the recognised ref-commands.
 pub fn detect_ref_command_at(text: &str, offset: usize) -> Option<(String, [usize; 2])> {
     detect_braced_command_at(text, offset, crate::labels::REF_COMMANDS)
+}
+
+// ── doc detector (Phase 2 §4.9) ────────────────────────────────────────
+
+/// Package-loading commands whose mandatory argument is a package name.
+const PACKAGE_LOAD_CMDS: &[&str] = &["usepackage", "RequirePackage"];
+
+/// Walk back from `offset` looking for a `\begin{…}` / `\end{…}` tag.
+/// Returns `(env_name, name_start, name_end)` (the byte offsets of the
+/// env name inside the braces), or `None`.
+fn read_nearest_env_tag(text: &[u8], offset: usize) -> Option<(&str, usize, usize)> {
+    // Walk left from `offset` looking for `\begin{NAME}` or `\end{NAME}`.
+    let mut i = offset.min(text.len());
+    while i > 0 {
+        i -= 1;
+        if text[i] == b'\\' {
+            // Try to read either `\begin` or `\end` at this position.
+            for (kind, want) in [("begin", b"\\begin".as_slice()), ("end", b"\\end".as_slice())] {
+                if text.len() >= i + want.len() && &text[i..i + want.len()] == want {
+                    let mut j = i + want.len();
+                    while j < text.len() && (text[j] == b' ' || text[j] == b'\t') {
+                        j += 1;
+                    }
+                    if text.get(j) != Some(&b'{') {
+                        continue;
+                    }
+                    j += 1;
+                    let start = j;
+                    while j < text.len() && text[j] != b'}' {
+                        j += 1;
+                    }
+                    if j >= text.len() {
+                        return None;
+                    }
+                    let name = std::str::from_utf8(&text[start..j]).ok()?;
+                    // Also confirm the cursor was inside the braces or
+                    // on the `\begin`/`\end` token itself.
+                    if offset >= i && offset <= j + 1 {
+                        let _ = kind;
+                        return Some((name, start, j));
+                    }
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Detect `\usepackage[<opts>]{<name>}` / `\usepackage{<name>}` /
+/// `\RequirePackage{<name>}` when the cursor is inside the `name`
+/// braced group.  Returns the package name.
+fn detect_package_at(text: &str, offset: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    let off = offset.min(bytes.len());
+
+    let mut depth = 0i32;
+    let mut i = off;
+    while i > 0 {
+        i -= 1;
+        let b = bytes[i];
+        match b {
+            b'}' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    // Walk back over the command name.
+                    let mut end = i;
+                    while end > 0 && (bytes[end - 1] == b' ' || bytes[end - 1] == b'\t') {
+                        end -= 1;
+                    }
+                    let cmd_end = end;
+                    let mut start = end;
+                    while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
+                        start -= 1;
+                    }
+                    if start == 0 || bytes[start - 1] != b'\\' {
+                        return None;
+                    }
+                    let cmd = std::str::from_utf8(&bytes[start..cmd_end]).ok()?;
+                    if !PACKAGE_LOAD_CMDS.contains(&cmd) {
+                        return None;
+                    }
+                    // The cursor is inside the `name` braced group.  Read
+                    // the inner body.
+                    if let Some((a, b, _)) = read_braced_simple(bytes, i) {
+                        let name = std::str::from_utf8(&bytes[a..b]).ok()?.trim().to_string();
+                        if name.is_empty() {
+                            return None;
+                        }
+                        return Some(name);
+                    }
+                    return None;
+                }
+                depth -= 1;
+            }
+            b'\\' if depth == 0 => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Detect when the cursor is sitting on the alphabetic body of a
+/// backslash-command name (e.g. `\text|bf`, `|\textbf`, `\text|bf`).
+/// Returns the command name (without the backslash).
+fn detect_bare_command_at(text: &str, offset: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    let off = offset.min(bytes.len());
+    // Need a backslash somewhere immediately before the alphabetic run
+    // that contains the cursor.  Walk left over [a-zA-Z]+ then expect
+    // a `\`.
+    if off == 0 {
+        return None;
+    }
+    if !bytes[off - 1].is_ascii_alphabetic() {
+        return None;
+    }
+    let end = off;
+    // Walk left over [a-zA-Z]+
+    // Walk left over [a-zA-Z]+
+    let mut start = end;
+    while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
+        start -= 1;
+    }
+    // Require a `\` immediately before the run, with no whitespace
+    // between (commands don't allow whitespace in their name).
+    if start == 0 || bytes[start - 1] != b'\\' {
+        return None;
+    }
+    let name = std::str::from_utf8(&bytes[start..end]).ok()?.to_string();
+    if name.is_empty() {
+        return None;
+    }
+    Some(name)
+}
+
+/// Detect when the cursor is on the env name in `\begin{…}` / `\end{…}`.
+fn detect_env_name_at(text: &str, offset: usize) -> Option<String> {
+    let bytes = text.as_bytes();
+    read_nearest_env_tag(bytes, offset)
+        .map(|(name, _, _)| name.to_string())
+}
+
+/// Phase 2 §4.9: dispatch cursor detection for the doc hover kind.
+///
+/// `cursor_context` only emits `kind: "doc"` when the candidate name is
+/// present in the bundled dictionary (`dict::lookup`).  Everything else
+/// falls through to `kind: "none"` (and on to the math path).  This
+/// keeps the dict's intentional smallness from generating noisy
+/// `kind: "doc"` responses for unknown commands.
+pub fn detect_doc_at(text: &str, offset: usize) -> Option<String> {
+    // 1. Package-load commands.
+    if let Some(name) = detect_package_at(text, offset) {
+        if crate::dict::lookup(&name).is_some() {
+            return Some(name);
+        }
+    }
+    // 2. Bare command names.
+    if let Some(name) = detect_bare_command_at(text, offset) {
+        if crate::dict::lookup(&name).is_some() {
+            return Some(name);
+        }
+    }
+    // 3. Env names inside `\begin{…}` / `\end{…}`.
+    if let Some(name) = detect_env_name_at(text, offset) {
+        if crate::dict::lookup(&name).is_some() {
+            return Some(name);
+        }
+    }
+    None
 }
 
 /// Generic brace-balanced detector: walk back from `offset`, find the
@@ -194,6 +367,13 @@ pub fn cursor_context(uri: &str, offset: usize, store: &BufferStore) -> CursorCo
             range: Some(range),
         };
     }
+    if let Some(name) = detect_doc_at(&text, offset) {
+        return CursorContext {
+            kind: "doc".to_string(),
+            key: Some(name),
+            range: None,
+        };
+    }
     if find_math_at(&text, offset).is_some() {
         return CursorContext {
             kind: "math".to_string(),
@@ -272,7 +452,7 @@ fn find_dollar_closer(text: &[u8], from: usize, want_double: bool) -> usize {
     text.len()
 }
 
-fn read_env_tag(text: &[u8], at: usize, kind: &str) -> Option<(&str, usize)> {
+fn read_env_tag<'a>(text: &'a [u8], at: usize, kind: &str) -> Option<(&'a str, usize)> {
     let want: &[u8] = if kind == "begin" { b"\\begin" } else { b"\\end" };
     if text.len() < at + want.len() || &text[at..at + want.len()] != want {
         return None;

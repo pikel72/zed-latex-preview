@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 mod bibtex;
 mod cursor;
+mod dict;
 mod index;
 mod labels;
 mod lsp_codec;
@@ -194,6 +195,7 @@ fn dispatch(state: &mut State, method: &str, params: &Value) -> Result<Value, Rp
         METHOD_CLOSE_FILE => handle_close_file(state, params).map_err(RpcError::from),
         METHOD_LOOKUP => handle_lookup(state, params).map_err(RpcError::from),
         METHOD_CURSOR_CONTEXT => handle_cursor_context(state, params).map_err(RpcError::from),
+        METHOD_DOC_LOOKUP => handle_doc_lookup(state, params).map_err(RpcError::from),
         METHOD_WORKSPACE_MACROS => handle_workspace_macros(state, params).map_err(RpcError::from),
         METHOD_PING => handle_ping(state, params).map_err(RpcError::from),
         _ => Err(RpcError::MethodNotFound(method.to_string())),
@@ -362,6 +364,22 @@ fn label_to_labelref(entry: &LabelEntry) -> anyhow::Result<Value> {
         "math": entry.math,
         "caption": entry.caption,
     }))
+}
+
+fn handle_doc_lookup(_state: &State, params: &Value) -> anyhow::Result<Value> {
+    // Spec §4.9: bundle a static dictionary, no I/O, no shell-out.  The
+    // node side falls back to a math hover when we return `found: false`.
+    let name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("name required"))?;
+    match dict::lookup(name) {
+        Some(entry) => {
+            let v: Value = serde_json::to_value(entry)?;
+            Ok(json!({ "found": true, "entry": v }))
+        }
+        None => Ok(json!({ "found": false })),
+    }
 }
 
 fn handle_cursor_context(state: &State, params: &Value) -> anyhow::Result<Value> {

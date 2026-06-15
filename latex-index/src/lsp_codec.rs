@@ -16,6 +16,7 @@ pub const METHOD_UPDATE_FILE: &str = "update_file";
 pub const METHOD_CLOSE_FILE: &str = "close_file";
 pub const METHOD_LOOKUP: &str = "lookup";
 pub const METHOD_CURSOR_CONTEXT: &str = "cursor_context";
+pub const METHOD_DOC_LOOKUP: &str = "doc_lookup";
 pub const METHOD_WORKSPACE_MACROS: &str = "workspace_macros";
 pub const METHOD_PING: &str = "ping";
 

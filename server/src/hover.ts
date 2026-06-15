@@ -21,6 +21,7 @@ import { getWorkspaceMacros } from "./preamble.js";
 import type { SidecarHandle } from "./rust_sidecar.js";
 import { citeHoverFor } from "./cite_hover.js";
 import { refHoverFor } from "./ref_hover.js";
+import { docHoverFor } from "./doc_hover.js";
 
 // ── types ──────────────────────────────────────────────────────────────
 
@@ -97,7 +98,16 @@ export async function hoverFor(
           const r = await sidecar.lookup(ctx.key, "ref");
           const out = refHoverFor(r, ctx.range);
           if (out) return out;
-          // Phase-1 stub: ref-hover returns null → fall through to math.
+          // ref-hover returns null on not-found → fall through.
+        } catch {
+          // fall through
+        }
+      } else if (ctx.kind === "doc" && ctx.key) {
+        // Spec §4.9 ordering: cite → ref → doc → fall through to math.
+        try {
+          const out = await docHoverFor(ctx.key, sidecar);
+          if (out) return out;
+          // not in dict → fall through to math.
         } catch {
           // fall through
         }
