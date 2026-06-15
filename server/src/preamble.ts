@@ -11,6 +11,11 @@
 //! re‑scanned so macros defined in sibling trees become visible.  Per‑file
 //! edits on `didOpen`/`didChange` always update that file's entry.
 
+// NOTE: This is the in-process fallback path.  The Rust sidecar
+// (latex-index) is the primary extractor; if it fails to spawn
+// (missing binary, build skipped) we fall back to this code so math
+// hover still works.  See server/src/server.ts.
+
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { extractMacros, type MacroMap } from "./macros.js";

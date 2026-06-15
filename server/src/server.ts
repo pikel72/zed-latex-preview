@@ -58,12 +58,10 @@ connection.onInitialize(async (params) => {
       });
       if (!sidecar && !sidecarWarned) {
         sidecarWarned = true;
-        connection.window?.logMessage({
-          type: 2, // Warning
-          message:
-            "latex-index sidecar not found; cite/ref hover disabled, math hover unchanged. " +
+        connection.console.warn(
+          "latex-index sidecar not found; cite/ref hover disabled, math hover unchanged. " +
             "Build with `cargo build --release` in `latex-index/` to enable.",
-        });
+        );
       }
     } catch {
       sidecar = null;

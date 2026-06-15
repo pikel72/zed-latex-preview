@@ -134,6 +134,39 @@ npx tsx --test test/hover.test.ts
 npx tsx --test test/cache.test.ts
 ```
 
+## Building the Rust sidecar
+
+Cite/ref hover previews require the Rust sidecar.
+
+Build it from the repo root with:
+
+```bash
+cd latex-index && cargo build --release
+```
+
+The resulting binary lives at `latex-index/target/release/latex-index`
+(or `latex-index.exe` on Windows).
+
+Lookup order at runtime:
+
+1. `LATEX_INDEX_PATH` environment variable
+2. `latex-index/target/release/` directory in the workspace
+3. `PATH`
+
+If the binary is missing, the extension logs a warning once and falls back
+to math-only hover.
+
+To disable the sidecar explicitly, set the following in your Zed
+`settings.json`:
+
+```json
+"lsp.latex-preview": {
+  "settings": {
+    "enabledSidecar": false
+  }
+}
+```
+
 ## Licence
 
 MIT
