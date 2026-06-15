@@ -19,6 +19,7 @@ mod index;
 mod labels;
 mod lsp_codec;
 mod macros;
+mod watcher;
 mod workspace;
 
 use crate::cursor::{cursor_context, BufferStore};
@@ -30,20 +31,24 @@ use crate::workspace::{json_path, normalise_uri};
 
 struct State {
     started_at: Instant,
-    index: Index,
+    index: Arc<Index>,
     buffers: BufferStore,
     initialised: bool,
     shutdown: Arc<AtomicBool>,
+    /// JoinHandle for the spawned file watcher, if any.  Kept so the
+    /// thread is joined cleanly on shutdown.
+    watcher: Option<std::thread::JoinHandle<()>>,
 }
 
 impl State {
     fn new() -> Self {
         Self {
             started_at: Instant::now(),
-            index: Index::new(),
+            index: Arc::new(Index::new()),
             buffers: BufferStore::new(),
             initialised: false,
             shutdown: Arc::new(AtomicBool::new(false)),
+            watcher: None,
         }
     }
 }
@@ -51,7 +56,7 @@ impl State {
 // ── entry point ────────────────────────────────────────────────────────
 
 fn main() -> anyhow::Result<()> {
-    let state = State::new();
+    let mut state = State::new();
     let shutdown = state.shutdown.clone();
     // Shutdown flag is polled in the main loop; signal handling is left to
     // the OS (SIGTERM/SIGINT) and the EOF-on-stdin fallback.
@@ -140,7 +145,15 @@ fn handle_line(state: &mut State, line: &str) -> Option<Value> {
         dispatch(state, method, params)
     })) {
         Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
+        Ok(Err(RpcError::MethodNotFound(name))) => {
+            return Some(serde_json::to_value(ResponseErr::new(
+                id,
+                error::METHOD_NOT_FOUND,
+                format!("method not found: {name}"),
+            ))
+            .unwrap());
+        }
+        Ok(Err(RpcError::Internal(e))) => {
             return Some(serde_json::to_value(ResponseErr::new(
                 id,
                 error::INTERNAL_ERROR,
@@ -160,23 +173,48 @@ fn handle_line(state: &mut State, line: &str) -> Option<Value> {
     Some(serde_json::to_value(ResponseOk::new(id, result)).unwrap())
 }
 
-fn dispatch(state: &mut State, method: &str, params: &Value) -> anyhow::Result<Value> {
+/// Errors produced by the dispatcher.  We only need to distinguish
+/// method-not-found from everything-else; the latter is reported as
+/// INTERNAL_ERROR with the anyhow message preserved.
+enum RpcError {
+    MethodNotFound(String),
+    Internal(anyhow::Error),
+}
+
+impl From<anyhow::Error> for RpcError {
+    fn from(e: anyhow::Error) -> Self {
+        RpcError::Internal(e)
+    }
+}
+
+fn dispatch(state: &mut State, method: &str, params: &Value) -> Result<Value, RpcError> {
     match method {
-        METHOD_INITIALIZE => handle_initialize(state, params),
-        METHOD_UPDATE_FILE => handle_update_file(state, params),
-        METHOD_CLOSE_FILE => handle_close_file(state, params),
-        METHOD_LOOKUP => handle_lookup(state, params),
-        METHOD_CURSOR_CONTEXT => handle_cursor_context(state, params),
-        METHOD_WORKSPACE_MACROS => handle_workspace_macros(state, params),
-        METHOD_PING => handle_ping(state, params),
-        _ => Err(anyhow::anyhow!("method not found: {}", method)),
+        METHOD_INITIALIZE => handle_initialize(state, params).map_err(RpcError::from),
+        METHOD_UPDATE_FILE => handle_update_file(state, params).map_err(RpcError::from),
+        METHOD_CLOSE_FILE => handle_close_file(state, params).map_err(RpcError::from),
+        METHOD_LOOKUP => handle_lookup(state, params).map_err(RpcError::from),
+        METHOD_CURSOR_CONTEXT => handle_cursor_context(state, params).map_err(RpcError::from),
+        METHOD_WORKSPACE_MACROS => handle_workspace_macros(state, params).map_err(RpcError::from),
+        METHOD_PING => handle_ping(state, params).map_err(RpcError::from),
+        _ => Err(RpcError::MethodNotFound(method.to_string())),
     }
 }
 
 // ── handlers ───────────────────────────────────────────────────────────
 
 fn handle_initialize(state: &mut State, params: &Value) -> anyhow::Result<Value> {
-    let _root = params.get("rootUri").and_then(|v| v.as_str());
+    // Idempotency guard: a defensive second `initialize` is a no-op and
+    // does NOT spawn a second watcher.  LSP clients are expected to call
+    // `initialize` exactly once, but a leaked thread is expensive and
+    // hard to spot.
+    if state.initialised {
+        return Ok(json!({
+            "ok": true,
+            "capabilities": { "kinds": ["cite", "ref", "math"] },
+            "version": PROTOCOL_VERSION,
+        }));
+    }
+    let root_uri = params.get("rootUri").and_then(|v| v.as_str());
     let version = params
         .get("version")
         .and_then(|v| v.as_u64())
@@ -187,6 +225,17 @@ fn handle_initialize(state: &mut State, params: &Value) -> anyhow::Result<Value>
             version,
             PROTOCOL_VERSION
         ));
+    }
+    // Spawn the file watcher when we have a usable rootUri.  Phase-1
+    // tests pass `rootUri: null`; those must still pass without a
+    // watcher.
+    if let Some(uri) = root_uri {
+        if let Some(root_path) = normalise_uri(uri) {
+            state.watcher = Some(crate::watcher::spawn_watcher(
+                root_path,
+                state.index.clone(),
+            ));
+        }
     }
     // Safe: dispatch takes &mut State, so the write is checked by the borrow checker.
     state.initialised = true;

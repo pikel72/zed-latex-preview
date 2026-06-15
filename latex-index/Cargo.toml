@@ -17,6 +17,8 @@ walkdir = "2"
 dashmap = "5"
 anyhow = "1"
 thiserror = "1"
+notify = "6"
+notify-debouncer-mini = "0.4"
 
 [profile.release]
 opt-level = 3
