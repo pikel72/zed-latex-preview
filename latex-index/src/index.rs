@@ -26,6 +26,8 @@ pub struct LabelEntry {
     pub math: Option<[usize; 2]>,
     /// Best-effort human caption (first line of theorem body, etc.).
     pub caption: String,
+    /// Source-code snippet around the label, pre-formatted for hover.
+    pub snippet: String,
 }
 
 /// A BibTeX entry (`@article`, `@book`, …).

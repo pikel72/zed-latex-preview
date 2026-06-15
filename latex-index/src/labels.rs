@@ -95,7 +95,7 @@ fn skip_to_eol(text: &[u8], from: usize) -> usize {
 }
 
 /// Read `\begin{NAME}` / `\end{NAME}` starting at `at` (the leading `\`).
-fn read_env_tag(text: &[u8], at: usize, kind: &str) -> Option<(&str, usize)> {
+fn read_env_tag<'a>(text: &'a [u8], at: usize, kind: &str) -> Option<(&'a str, usize)> {
     let want: &[u8] = if kind == "begin" {
         b"\\begin"
     } else {
@@ -167,6 +167,241 @@ fn read_label_key(text: &[u8], at: usize) -> Option<(String, usize)> {
     }
 }
 
+// ── snippet extraction (Phase 2 §4.1) ──────────────────────────────────
+
+/// Line and byte-size limits for the snippet per spec §4.1.
+const SNIPPET_MAX_LINES: usize = 12;
+const SNIPPET_MAX_BYTES: usize = 4 * 1024;
+
+/// Truncation marker appended when the body exceeds limits.
+const TRUNCATED_MARKER: &str = "% (truncated)";
+
+/// Find the start of the line containing `offset` (the byte just past the
+/// preceding `\n`, or 0).
+fn line_start(text: &[u8], offset: usize) -> usize {
+    let n = offset.min(text.len());
+    let mut i = n;
+    while i > 0 && text[i - 1] != b'\n' {
+        i -= 1;
+    }
+    i
+}
+
+/// Find the start of the line after the line containing `offset` (the byte
+/// just past the next `\n`).
+fn line_end(text: &[u8], offset: usize) -> usize {
+    skip_to_eol(text, offset.min(text.len()))
+}
+
+/// Trim leading and trailing blank lines from `s` (blank = empty or
+/// whitespace-only).
+fn trim_blank_lines(s: &str) -> &str {
+    let mut start = 0;
+    let bytes = s.as_bytes();
+    while start < bytes.len() {
+        let line_end = bytes[start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|p| start + p)
+            .unwrap_or(bytes.len());
+        let line = &bytes[start..line_end];
+        if line.iter().any(|b| !b.is_ascii_whitespace()) {
+            break;
+        }
+        start = if line_end < bytes.len() { line_end + 1 } else { bytes.len() };
+    }
+    let mut end = bytes.len();
+    while end > start {
+        let line_start = bytes[..end]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let line = &bytes[line_start..end];
+        if line.iter().any(|b| !b.is_ascii_whitespace()) {
+            break;
+        }
+        end = line_start;
+        if end == 0 {
+            break;
+        }
+        // step past the trailing '\n'
+        if end > 0 && bytes[end - 1] == b'\n' {
+            end -= 1;
+        }
+    }
+    std::str::from_utf8(&bytes[start..end]).unwrap_or("")
+}
+
+/// Apply the §4.1 truncation policy to a candidate body string.
+fn truncate_snippet(body: &str) -> String {
+    let total_lines = body.matches('\n').count() + if body.ends_with('\n') { 0 } else { 1 };
+    let byte_len = body.len();
+    if total_lines <= SNIPPET_MAX_LINES && byte_len <= SNIPPET_MAX_BYTES {
+        return body.to_string();
+    }
+    let mut kept = String::new();
+    let mut count = 0usize;
+    let mut consumed = 0usize;
+    for line in body.split_inclusive('\n') {
+        let prospective = consumed + line.len();
+        if count + 1 > SNIPPET_MAX_LINES || prospective > SNIPPET_MAX_BYTES {
+            break;
+        }
+        kept.push_str(line);
+        consumed = prospective;
+        count += 1;
+    }
+    if !kept.ends_with('\n') && !kept.is_empty() {
+        kept.push('\n');
+    }
+    kept.push_str(TRUNCATED_MARKER);
+    kept
+}
+
+/// Build the snippet for a label inside a math or theorem env.
+/// Uses the env's recorded body range; falls back to `"\label{...}"` line
+/// with the truncation marker when no body boundary can be located.
+fn snippet_for_env_body(
+    text: &[u8],
+    label_at: usize,
+    body_start: Option<usize>,
+    body_end: Option<usize>,
+    section_at: usize,
+) -> String {
+    let label_line_start = line_start(text, label_at);
+    let label_line_end = line_end(text, label_at);
+
+    // No body boundary → fallback to the single \label line + truncated.
+    let (Some(bs), Some(be)) = (body_start, body_end) else {
+        let line = &text[label_line_start..label_line_end];
+        let line = std::str::from_utf8(line).unwrap_or("");
+        let mut out = line.trim_end_matches('\n').to_string();
+        out.push('\n');
+        out.push_str(TRUNCATED_MARKER);
+        return out;
+    };
+
+    if be <= bs {
+        // Unclosed env — same fallback.
+        let line = &text[label_line_start..label_line_end];
+        let line = std::str::from_utf8(line).unwrap_or("");
+        let mut out = line.trim_end_matches('\n').to_string();
+        out.push('\n');
+        out.push_str(TRUNCATED_MARKER);
+        return out;
+    }
+
+    let bs = bs.min(text.len());
+    let be = be.min(text.len());
+    let raw = &text[bs..be];
+    let raw_str = std::str::from_utf8(raw).unwrap_or("");
+    let trimmed = trim_blank_lines(raw_str);
+    let _ = section_at; // currently unused but kept for future call sites
+    truncate_snippet(trimmed)
+}
+
+/// Build the snippet for `\section{...}\label{...}`: the single line
+/// containing the section command, with the trailing `\label{...}`.
+fn snippet_for_section(text: &[u8], section_at: usize, label_at: usize) -> String {
+    let ls = line_start(text, section_at);
+    let le = line_end(text, label_at.max(section_at));
+    let line = &text[ls..le];
+    let s = std::str::from_utf8(line).unwrap_or("");
+    truncate_snippet(s.trim_end_matches('\n'))
+}
+
+/// Build the snippet for a free-floating `\label{...}`: the line containing
+/// `\label` plus one line of context before (≤ 2 lines total).
+fn snippet_for_free_floating(text: &[u8], label_at: usize) -> String {
+    let ls = line_start(text, label_at);
+    // One line of context before, if available.
+    let prev_le = ls;
+    let prev_ls = if prev_le > 0 {
+        // Find the end of the previous line.
+        let mut i = prev_le - 1;
+        // skip the '\n' separator
+        if text[i] == b'\n' {
+            i -= 1;
+        }
+        line_start(text, i)
+    } else {
+        prev_le
+    };
+    let le = line_end(text, label_at);
+    let s = &text[prev_ls..le];
+    let out = std::str::from_utf8(s).unwrap_or("");
+    truncate_snippet(out.trim_end_matches('\n'))
+}
+
+/// Locate the matching `\end{<env_name>}` for a math frame whose `body_end`
+/// is still 0 (the env hasn't been closed yet — the label is processed
+/// before `\end`).  Returns the byte offset of the leading `\` of `\end{…}`,
+/// or `None` if no match can be found (unclosed env).
+fn find_math_end(text: &[u8], env_name: &str, search_from: usize) -> Option<usize> {
+    let needle = format!("\\end{{{env_name}}}");
+    let n = needle.as_bytes();
+    let mut i = search_from;
+    while i + n.len() <= text.len() {
+        if starts_with_word(text, i, n) && !is_escaped(text, i) {
+            return Some(i);
+        }
+        // Skip comments quickly to mirror the main loop's comment handling.
+        if text[i] == b'%' && !is_escaped(text, i) {
+            i = skip_to_eol(text, i + 1);
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Dispatch to the correct snippet extraction for the current env stack at
+/// the time the `\label` is processed.
+fn compute_snippet_for_label(env_stack: &[EnvFrame], text: &[u8], label_at: usize) -> String {
+    // Look at the innermost enclosing frame, if any.
+    if let Some(frame) = env_stack.last() {
+        match frame {
+            EnvFrame::Math {
+                body_start,
+                body_end,
+                name,
+            } => {
+                // `body_end` is 0 until `\end{…}` is processed; the label
+                // sits inside the body, so we often hit this branch with
+                // `body_end == 0`.  Resolve by scanning forward for the
+                // matching `\end{name}` from `body_start`.
+                let resolved_end = if *body_end == 0 {
+                    find_math_end(text, name, *body_start).unwrap_or(0)
+                } else {
+                    *body_end
+                };
+                let (bs, be) = if resolved_end > *body_start {
+                    (Some(*body_start), Some(resolved_end))
+                } else {
+                    (None, None)
+                };
+                return snippet_for_env_body(text, label_at, bs, be, label_at);
+            }
+            EnvFrame::Theorem { body_start, .. } => {
+                // For theorem envs we don't track body_end (the env closes
+                // at the matching \end{...}); use the label position as the
+                // upper bound — extract up to the label, which is what we
+                // want anyway for the first-line caption.
+                return snippet_for_env_body(
+                    text,
+                    label_at,
+                    Some(*body_start),
+                    Some(label_at),
+                    label_at,
+                );
+            }
+        }
+    }
+    // Free-floating \label.
+    snippet_for_free_floating(text, label_at)
+}
+
 /// Convert a byte offset into a 0-based LSP line.  `\r` does not count
 /// (matches `scanner.ts` semantics).
 fn offset_to_line(text: &[u8], offset: usize) -> u32 {
@@ -229,7 +464,9 @@ fn current_math_range(stack: &[EnvFrame], label_at: usize) -> Option<[usize; 2]>
             ..
         } = frame
         {
-            if *body_end > *body_start && label_at >= *body_start && label_at <= *body_end {
+            // body_end may be 0 when the env hasn't closed yet (label
+            // inside the body is processed before `\end{...}`).
+            if label_at >= *body_start && (*body_end == 0 || label_at <= *body_end) {
                 return Some([*body_start, *body_end]);
             }
         }
@@ -312,6 +549,7 @@ pub fn extract_labels(text: &str, path: &Path, index: &Index) {
                     let env = current_env_label(&env_stack);
                     let math = current_math_range(&env_stack, probe);
                     let caption = best_caption_for_env(&env, &env_stack, bytes, probe);
+                    let snippet = compute_snippet_for_label(&env_stack, bytes, i);
                     let entry = LabelEntry {
                         key,
                         file: path.to_path_buf(),
@@ -320,6 +558,7 @@ pub fn extract_labels(text: &str, path: &Path, index: &Index) {
                         env,
                         math,
                         caption,
+                        snippet,
                     };
                     index.labels.insert(entry.key.clone(), entry);
                     i = end;
@@ -352,12 +591,13 @@ pub fn extract_labels(text: &str, path: &Path, index: &Index) {
                                 p3 += 1;
                             }
                             if bytes.get(p3) == Some(&b'{') {
-                                if let Some((key, _)) = read_label_key(bytes, p3) {
+                                if let Some((key, label_end)) = read_label_key(bytes, p3) {
                                     let line = offset_to_line(bytes, p2);
                                     let caption = std::str::from_utf8(&bytes[title_start..title_end])
                                         .unwrap_or("")
                                         .trim()
                                         .to_string();
+                                    let snippet = snippet_for_section(bytes, i, p2);
                                     let entry = LabelEntry {
                                         key,
                                         file: path.to_path_buf(),
@@ -366,8 +606,12 @@ pub fn extract_labels(text: &str, path: &Path, index: &Index) {
                                         env: "section".to_string(),
                                         math: None,
                                         caption,
+                                        snippet,
                                     };
                                     index.labels.insert(entry.key.clone(), entry);
+                                    // Advance past the label so step 4 doesn't
+                                    // re-insert it with env="document".
+                                    i = label_end - 1; // -1 compensates for i+=1 below
                                 }
                             }
                         }
@@ -512,5 +756,118 @@ x = 1 \label{eq:inner}
         let pos = text.find("eq:x").unwrap() + 1;
         let (key, _) = detect_ref_at(text, pos).unwrap();
         assert_eq!(key, "eq:x,y:z");
+    }
+
+    // ── Phase 2 §7.1: snippet extraction unit tests ─────────────────────
+
+    #[test]
+    fn snippet_for_equation_includes_body() {
+        let idx = Index::new();
+        let text = "\
+\\begin{equation}
+a^2 + b^2 = c^2 \\label{eq:pythag}
+\\end{equation}";
+        extract_labels(text, Path::new("a.tex"), &idx);
+        let entry = idx.labels.get("eq:pythag").expect("label found");
+        let snippet = &entry.snippet;
+        // Body is between \\begin{equation} and \\end{equation}.
+        assert!(snippet.contains("a^2 + b^2 = c^2"), "snippet = {snippet:?}");
+        // No truncation marker.
+        assert!(!snippet.contains("% (truncated)"));
+    }
+
+    #[test]
+    fn snippet_for_theorem_captures_first_line() {
+        let idx = Index::new();
+        let text = "\
+\\begin{theorem}
+Pythagoras: a squared plus b squared equals c squared.
+The proof is left as an exercise. \\label{thm:pythag}
+\\end{theorem}";
+        extract_labels(text, Path::new("a.tex"), &idx);
+        let entry = idx.labels.get("thm:pythag").expect("label found");
+        let snippet = &entry.snippet;
+        // First line of body captured.
+        assert!(
+            snippet.contains("Pythagoras: a squared plus b squared equals c squared."),
+            "snippet = {snippet:?}"
+        );
+        // No truncation marker.
+        assert!(!snippet.contains("% (truncated)"));
+    }
+
+    #[test]
+    fn snippet_for_section_is_single_line() {
+        let idx = Index::new();
+        let text = "\\section{Introduction}\\label{sec:intro}\nbody paragraph here.";
+        extract_labels(text, Path::new("a.tex"), &idx);
+        let entry = idx.labels.get("sec:intro").expect("label found");
+        let snippet = &entry.snippet;
+        // The single line containing the \\section command + trailing \\label.
+        assert!(snippet.contains("\\section{Introduction}"));
+        assert!(snippet.contains("\\label{sec:intro}"));
+        // Must not contain the body line.
+        assert!(!snippet.contains("body paragraph here."));
+    }
+
+    #[test]
+    fn snippet_truncated_at_12_lines() {
+        let idx = Index::new();
+        // Build a theorem body with 20 distinct lines so we exceed 12.
+        let mut body = String::from("\\begin{theorem}\n");
+        for n in 0..20 {
+            body.push_str(&format!("line {n}\n"));
+        }
+        body.push_str("\\label{thm:long}\n\\end{theorem}");
+        extract_labels(&body, Path::new("a.tex"), &idx);
+        let entry = idx.labels.get("thm:long").expect("label found");
+        let snippet = &entry.snippet;
+        // Truncation marker present.
+        assert!(snippet.contains("% (truncated)"), "snippet = {snippet:?}");
+        // ≤ 12 lines of body + the marker line.
+        let line_count = snippet.lines().count();
+        assert!(
+            line_count <= 13,
+            "expected ≤ 13 lines, got {line_count}: {snippet:?}"
+        );
+        // First line preserved.
+        assert!(snippet.contains("line 0"), "snippet = {snippet:?}");
+        // Last kept body line must not be `line 19`.
+        assert!(
+            !snippet.contains("line 19"),
+            "snippet should not include line 19: {snippet:?}"
+        );
+    }
+
+    #[test]
+    fn snippet_truncated_at_4_kib() {
+        let idx = Index::new();
+        // Build a theorem body whose total exceeds 4 KiB but stays under
+        // 12 lines so the *byte* limit is the binding constraint.
+        let big_line = "x".repeat(500); // 500 bytes
+        let mut body = String::from("\\begin{theorem}\n");
+        for _ in 0..10 {
+            // 10 * 500 = 5000 bytes > 4096.
+            body.push_str(&big_line);
+            body.push('\n');
+        }
+        body.push_str("\\label{thm:big}\n\\end{theorem}");
+        extract_labels(&body, Path::new("a.tex"), &idx);
+        let entry = idx.labels.get("thm:big").expect("label found");
+        let snippet = &entry.snippet;
+        // Truncation marker present.
+        assert!(snippet.contains("% (truncated)"), "snippet = {snippet:?}");
+        // ≤ 4 KiB + the marker line.
+        assert!(
+            snippet.len() <= SNIPPET_MAX_BYTES + TRUNCATED_MARKER.len() + 2,
+            "snippet len = {}",
+            snippet.len()
+        );
+        // ≤ 12 lines.
+        let line_count = snippet.lines().count();
+        assert!(
+            line_count <= 13,
+            "expected ≤ 13 lines, got {line_count}"
+        );
     }
 }
