@@ -14,6 +14,20 @@ export interface PreviewConfig {
   scale: number;
   color: ColorMode;
   renderer: Renderer;
+  // ── new for the sidecar split (Phase 1) ──────────────────────────
+  /** When true, the Node LSP spawns the Rust `latex-index` sidecar
+   *  on `onInitialize`.  Falls back to the in-process extractor on
+   *  spawn failure.  Default `true`. */
+  enabledSidecar: boolean;
+  /** When true, hover previews are shown for `\cite{...}`.  Default `true`. */
+  enabledCitePreview: boolean;
+  /** When true, hover previews are shown for `\ref{...}`.  Default `true`. */
+  enabledRefPreview: boolean;
+  /** Optional explicit path to the `latex-index` binary.  Default `null`
+   *  = auto-resolve from `LATEX_INDEX_PATH`, the cargo `target/` dir, or PATH. */
+  sidecarPath: string | null;
+  /** Maximum size of a `.bib` file to parse, in MiB.  Default `5`. */
+  bibMaxFileSizeMB: number;
 }
 
 export function defaultConfig(): PreviewConfig {
@@ -24,6 +38,11 @@ export function defaultConfig(): PreviewConfig {
     scale: 1.4,
     color: "auto",
     renderer: "mathjax",
+    enabledSidecar: true,
+    enabledCitePreview: true,
+    enabledRefPreview: true,
+    sidecarPath: null,
+    bibMaxFileSizeMB: 5,
   };
 }
 
@@ -40,6 +59,12 @@ export function configFromInit(initializationOptions: unknown): PreviewConfig {
   cfg.timeoutMs  = pick(o, "timeoutMs",  isNumber, cfg.timeoutMs);
   cfg.maxFormulaLength = pick(o, "maxFormulaLength", isNumber, cfg.maxFormulaLength);
   cfg.renderer   = pick(o, "renderer",   isRenderer, cfg.renderer);
+  // Phase-1 keys (all optional, with safe defaults).
+  cfg.enabledSidecar    = pick(o, "enabledSidecar",    isBool,  cfg.enabledSidecar);
+  cfg.enabledCitePreview = pick(o, "enabledCitePreview", isBool, cfg.enabledCitePreview);
+  cfg.enabledRefPreview  = pick(o, "enabledRefPreview",  isBool, cfg.enabledRefPreview);
+  cfg.sidecarPath       = pick(o, "sidecarPath",       isString, cfg.sidecarPath);
+  cfg.bibMaxFileSizeMB  = pick(o, "bibMaxFileSizeMB",  isNumber, cfg.bibMaxFileSizeMB);
   return cfg;
 }
 
@@ -47,6 +72,7 @@ export function configFromInit(initializationOptions: unknown): PreviewConfig {
 
 function isBool(v: unknown): v is boolean { return typeof v === "boolean"; }
 function isNumber(v: unknown): v is number { return typeof v === "number"; }
+function isString(v: unknown): v is string { return typeof v === "string"; }
 function isColor(v: unknown): v is ColorMode {
   return v === "auto" || v === "black" || v === "white";
 }

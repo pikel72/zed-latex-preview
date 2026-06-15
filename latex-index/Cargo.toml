@@ -1,0 +1,25 @@
+[package]
+name = "latex-index"
+version = "0.1.0"
+edition = "2021"
+description = "Rust sidecar binary for the Zed LaTeX hover-preview LSP: workspace-wide label, citation, and macro indexing."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "latex-index"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+dashmap = "5"
+anyhow = "1"
+thiserror = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

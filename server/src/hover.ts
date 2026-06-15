@@ -18,6 +18,9 @@ import { render } from "./render.js";
 import { LRU, memoizeByText, type CacheKey } from "./cache.js";
 import type { PreviewConfig } from "./config.js";
 import { getWorkspaceMacros } from "./preamble.js";
+import type { SidecarHandle } from "./rust_sidecar.js";
+import { citeHoverFor } from "./cite_hover.js";
+import { refHoverFor } from "./ref_hover.js";
 
 // ── types ──────────────────────────────────────────────────────────────
 
@@ -48,6 +51,11 @@ function toDataUri(svg: string): string {
  * @param text           Full buffer text of the hovered document.
  * @param position       0‑based cursor position.
  * @param cfg            Current user configuration.
+ * @param uri            Document URI — required when a sidecar is present
+ *                       so it can look up the cursor context in the
+ *                       most-recently-seen buffer.
+ * @param sidecar        The Rust sidecar handle, or `null` if it failed
+ *                       to spawn (in which case we fall back to math only).
  * @param macroOverride  Testing hook — when set, workspace macros are
  *                       bypassed and this map is used instead.
  */
@@ -55,11 +63,51 @@ export async function hoverFor(
   text: string,
   position: Position,
   cfg: PreviewConfig,
+  uri?: string,
+  sidecar?: SidecarHandle | null,
   macroOverride?: MacroMap,
 ): Promise<HoverResult | null> {
   if (!cfg.enabled) return null;
 
   const offset = positionToOffset(text, position);
+
+  // ── Phase 1: ask the sidecar what kind of cursor we are on. ──────
+  if (
+    sidecar &&
+    uri &&
+    (cfg.enabledCitePreview || cfg.enabledRefPreview)
+  ) {
+    let ctx: Awaited<ReturnType<SidecarHandle["cursor_context"]>> | null = null;
+    try {
+      ctx = await sidecar.cursor_context(uri, offset);
+    } catch {
+      // Sidecar hiccup — fall through to math.
+      ctx = null;
+    }
+    if (ctx) {
+      if (ctx.kind === "cite" && cfg.enabledCitePreview && ctx.key) {
+        try {
+          const r = await sidecar.lookup(ctx.key, "cite");
+          return citeHoverFor(r, ctx.range);
+        } catch {
+          // fall through to math
+        }
+      } else if (ctx.kind === "ref" && cfg.enabledRefPreview && ctx.key) {
+        try {
+          const r = await sidecar.lookup(ctx.key, "ref");
+          const out = refHoverFor(r, ctx.range);
+          if (out) return out;
+          // Phase-1 stub: ref-hover returns null → fall through to math.
+        } catch {
+          // fall through
+        }
+      }
+      // `kind: "math"` or `kind: "none"` → fall through to the existing
+      // math path so inline math still gets rendered.
+    }
+  }
+
+  // ── existing math hover path ─────────────────────────────────────
   const region = findMathAt(text, offset, { maxFormulaLength: cfg.maxFormulaLength });
   if (!region) return null;
 
