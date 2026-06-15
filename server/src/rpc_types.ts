@@ -26,6 +26,8 @@ export interface LabelRef {
   env: string;
   math?: [number, number] | null;
   caption: string;
+  /** Pre-formatted source snippet for hover rendering. */
+  snippet: string;
 }
 
 /** A `\newcommand`-style macro, serialised by `MacroDef`. */
@@ -40,7 +42,7 @@ export interface MacroDef {
 
 /** `cursor_context` result. */
 export interface CursorContext {
-  kind: "cite" | "ref" | "math" | "none";
+  kind: "cite" | "ref" | "math" | "doc" | "none";
   key?: string;
   /** Byte range of the key inside its braces (both exclusive of braces). */
   range?: [number, number];
@@ -81,6 +83,29 @@ export interface PingResult {
   ok: boolean;
   uptime_ms: number;
 }
+
+// ── `doc_lookup` (Phase 2 §4.9) ────────────────────────────────────────
+
+/** Kind tag for `DocEntry`, serialised by `dict::DictEntry` in Rust. */
+export type DocKind = "package" | "command";
+
+/** A single dictionary entry, serialised by `dict::DictEntry`. */
+export interface DocEntry {
+  kind: DocKind;
+  title: string;
+  short: string;
+  docs?: string;
+}
+
+/** `doc_lookup` params. */
+export interface DocLookupRequest {
+  name: string;
+}
+
+/** `doc_lookup` result. */
+export type DocLookupResult =
+  | { found: true; entry: DocEntry }
+  | { found: false };
 
 // ── JSON-RPC 2.0 envelope ──────────────────────────────────────────────
 

@@ -35,6 +35,7 @@ import type {
   InitializeResult,
   UpdateFileResult,
   PingResult,
+  DocLookupResult,
 } from "./rpc_types.js";
 
 // ── configuration ──────────────────────────────────────────────────────
@@ -258,6 +259,11 @@ class SidecarHandle {
 
   async cursor_context(uri: string, offset: number): Promise<CursorContext> {
     return (await this.request("cursor_context", { uri, offset })) as CursorContext;
+  }
+
+  /** `doc_lookup` (Phase 2 §4.9) — bundled package/command dictionary. */
+  async doc_lookup(name: string): Promise<DocLookupResult> {
+    return (await this.request("doc_lookup", { name })) as DocLookupResult;
   }
 
   async workspace_macros(): Promise<WorkspaceMacrosResult> {
