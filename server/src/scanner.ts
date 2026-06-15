@@ -221,10 +221,13 @@ export function findMathAt(text: string, offset: number, opts: ScanOptions = {})
 
 // ── offset → position ──────────────────────────────────────────────────
 
-/** Convert a byte offset to a 0-based line+character position. */
+/** Convert a byte offset to a 0-based line+character position.
+ *  `\r` is not counted as a character (LSP positions exclude line terminators),
+ *  so CRLF documents don't cause drift. */
 function offsetToPosition(text: string, offset: number): Position {
   let line = 0, ch = 0;
   for (let i = 0; i < offset && i < text.length; i++) {
+    if (text[i] === "\r") continue;
     if (text[i] === "\n") { line++; ch = 0; } else ch++;
   }
   return { line, character: ch };

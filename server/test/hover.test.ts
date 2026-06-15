@@ -83,3 +83,25 @@ test("document macro overrides preamble macro of same name", async () => {
   assert.ok(r);
   assert.match(r!.contents.value, /^!\[formula\]\(data:image\/svg\+xml;base64,/);
 });
+
+// CRLF regression: positionToOffset must skip \r.  On Windows-saved files,
+// every line ends with \r\n; counting \r as a character shifts the cursor
+// onto the \n byte at column 0 of the next line, so the math region one
+// column over is missed.
+test("hover on CRLF document at column 0 finds the math region", async () => {
+  const src = "preamble\r\n$x$";
+  // line 1, column 0 should land on the opening `$` (offset 10), not the
+  // preceding \n (offset 9).
+  const r = await hoverFor(src, { line: 1, character: 0 }, cfg);
+  assert.ok(r, "expected a hover result on a CRLF line");
+  assert.match(r!.contents.value, /^!\[formula\]\(data:image\/svg\+xml;base64,/);
+});
+
+test("hover on CRLF document after several lines lands at the right byte", async () => {
+  // Multi-line CRLF: each \r adds a drift if counted as a column character.
+  const src = "line1\r\nline2\r\nline3\r\n$a+b$";
+  // line 3, column 0 should be the `$` after the third \r\n.
+  const r = await hoverFor(src, { line: 3, character: 0 }, cfg);
+  assert.ok(r, "expected a hover result on a CRLF line after multiple CRLFs");
+  assert.match(r!.contents.value, /^!\[formula\]\(data:image\/svg\+xml;base64,/);
+});

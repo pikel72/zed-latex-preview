@@ -52,11 +52,13 @@ function colorFor(c: "black" | "white" | "auto"): string {
   return "currentColor";  // inherits from CSS (respects light / dark theme)
 }
 
-/** Rewrite one `width`/`height="…ex"` SVG attribute into `px`, applying
- *  `exPx` and an anti‑clip padding of 8 px. */
+/** Rewrite every `width`/`height="…ex"` SVG attribute into `px`, applying
+ *  `exPx` and an anti‑clip padding of 8 px.  The global flag is needed
+ *  because MathJax's stretchy delimiters emit nested `<svg>` elements
+ *  each carrying their own `width`/`height` in `ex` units. */
 const PAD = 8;
 function exToPx(svg: string, attr: "width" | "height", exPx: number): string {
-  const re = new RegExp(`\\b${attr}="([\\d.]+)ex"`);
+  const re = new RegExp(`\\b${attr}="([\\d.]+)ex"`, "g");
   return svg.replace(re, (_full, v: string) =>
     `${attr}="${Math.round(Number(v) * exPx) + PAD}px"`);
 }

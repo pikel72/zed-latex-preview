@@ -120,6 +120,7 @@ export async function hoverFor(
 function positionToOffset(text: string, pos: Position): number {
   let line = 0, ch = 0;
   for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\r") continue;        // LSP positions exclude \r (mirror scanner.ts offsetToPosition)
     if (line === pos.line && ch === pos.character) return i;
     if (text[i] === "\n") { line++; ch = 0; } else ch++;
   }

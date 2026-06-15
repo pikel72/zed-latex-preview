@@ -72,3 +72,44 @@ test("mergeMacros: overrides win over base", () => {
   assert.equal(merged.R, "\\mathcal{R}");  // override
   assert.equal(merged.Z, "\\mathbb{Z}");   // from base
 });
+
+// Regression: macro bodies and arguments can contain nested braces
+// (e.g. \sqrt inside a \newcommand body, or a \frac inside a macro
+// argument).  The previous regex-based parser only understood one level
+// of `{…}` and silently dropped such definitions.
+
+test("newcommand with one level of nested braces in body", () => {
+  const doc = "\\newcommand{\\x}{\\sqrt{\\frac{a}{b}}}";
+  const m = extractMacros(doc);
+  assert.equal(m.x, "\\sqrt{\\frac{a}{b}}");
+  assert.equal(expand("\\x", m), "\\sqrt{\\frac{a}{b}}");
+});
+
+test("newcommand with deeply nested braces in body", () => {
+  const doc = "\\newcommand{\\y}{\\frac{\\sqrt{a}}{\\sqrt{b}}}";
+  const m = extractMacros(doc);
+  assert.equal(m.y, "\\frac{\\sqrt{a}}{\\sqrt{b}}");
+});
+
+test("newcommand body with two-level nesting in arg of operator", () => {
+  // \operatorname-style bodies also nest.
+  const doc = "\\DeclareMathOperator{\\BigO}{\\mathcal{O}_{n}}";
+  const m = extractMacros(doc);
+  assert.equal(m.BigO, "\\operatorname{\\mathcal{O}_{n}}");
+});
+
+test("macro argument with nested braces", () => {
+  const doc = "\\newcommand{\\foo}[1]{#1+1}";
+  const m = extractMacros(doc);
+  // The argument itself has nested braces (\frac inside).
+  assert.equal(expand("\\foo{\\frac{a}{b}}", m), "\\frac{a}{b}+1");
+});
+
+test("macro with nested braces survives roundtrip from extract+expand", () => {
+  // Document defines \x with nested body and uses it — the hover expansion
+  // must produce the original body verbatim.
+  const doc = "\\newcommand{\\x}{\\sqrt{\\frac{a}{b}}}\n$\\x$";
+  const m = extractMacros(doc);
+  assert.equal(m.x, "\\sqrt{\\frac{a}{b}}");
+  assert.equal(expand("\\x", m), "\\sqrt{\\frac{a}{b}}");
+});
