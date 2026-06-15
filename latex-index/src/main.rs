@@ -53,7 +53,9 @@ impl State {
 fn main() -> anyhow::Result<()> {
     let state = State::new();
     let shutdown = state.shutdown.clone();
-    install_signal_handlers(shutdown);
+    // Shutdown flag is polled in the main loop; signal handling is left to
+    // the OS (SIGTERM/SIGINT) and the EOF-on-stdin fallback.
+    let _ = shutdown;
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -75,7 +77,7 @@ fn main() -> anyhow::Result<()> {
         if line.is_empty() {
             continue;
         }
-        let resp = handle_line(&state, &line);
+        let resp = handle_line(&mut state, &line);
         if let Some(resp) = resp {
             let s = serde_json::to_string(&resp).unwrap_or_else(|e| {
                 json!({"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":e.to_string()}})
@@ -90,35 +92,9 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// On Unix we use the lightweight `signal-hook`-free approach: the main
-/// loop polls `shutdown` once per iteration.  Killing the sidecar via
-/// SIGTERM/SIGINT simply terminates the process — the protocol does not
-/// require a graceful shutdown beyond "drain in-flight requests", which
-/// v1 is single-threaded and therefore drains by construction.
-///
-/// On Windows we install a console control handler via the Win32 API.
-/// We deliberately don't pull in `windows-sys` (extra dep): the polling
-/// fallback in the main loop catches EOF when the parent closes the pipe.
-fn install_signal_handlers(shutdown: Arc<AtomicBool>) {
-    #[cfg(unix)]
-    {
-        // No-op on Unix; the poll catches EOF and signal termination is
-        // handled by the OS closing stdio.  We bind `shutdown` so it isn't
-        // an unused-arg warning in release builds.
-        let _ = shutdown;
-    }
-    #[cfg(not(unix))]
-    {
-        // On non-Unix (Windows) we currently rely on the polling check +
-        // EOF on stdin.  A future PR can wire `windows-sys` for a true
-        // CTRL_BREAK handler; not required for v1.
-        let _ = shutdown;
-    }
-}
-
 // ── request handling ───────────────────────────────────────────────────
 
-fn handle_line(state: &State, line: &str) -> Option<Value> {
+fn handle_line(state: &mut State, line: &str) -> Option<Value> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
@@ -137,18 +113,18 @@ fn handle_line(state: &State, line: &str) -> Option<Value> {
 
     if request.is_notification() {
         // Notifications (no id) still get handled but produce no response.
-        let method = request.method.clone();
-        let id = request.id.clone();
-        let params = request.params.clone();
-        // We can't pass a Request by value if is_notification() consumed it,
-        // so reconstruct.
+        // Borrow instead of clone — handler only reads, request lives for the
+        // whole function scope.
+        let method = request.method.as_str();
+        let id = &request.id;
+        let params = &request.params;
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = dispatch(state, &method, &params);
+            let _ = dispatch(state, method, params);
         }));
         // If the notification had an id (rare), error out.
         if !matches!(id, Value::Null) {
             return Some(serde_json::to_value(ResponseErr::new(
-                id,
+                id.clone(),
                 error::INVALID_REQUEST,
                 "notifications must not include id",
             ))
@@ -158,10 +134,10 @@ fn handle_line(state: &State, line: &str) -> Option<Value> {
     }
 
     let id = request.id.clone();
-    let method = request.method.clone();
-    let params = request.params.clone();
+    let method = request.method.as_str();
+    let params = &request.params;
     let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        dispatch(state, &method, &params)
+        dispatch(state, method, params)
     })) {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
@@ -184,7 +160,7 @@ fn handle_line(state: &State, line: &str) -> Option<Value> {
     Some(serde_json::to_value(ResponseOk::new(id, result)).unwrap())
 }
 
-fn dispatch(state: &State, method: &str, params: &Value) -> anyhow::Result<Value> {
+fn dispatch(state: &mut State, method: &str, params: &Value) -> anyhow::Result<Value> {
     match method {
         METHOD_INITIALIZE => handle_initialize(state, params),
         METHOD_UPDATE_FILE => handle_update_file(state, params),
@@ -199,7 +175,7 @@ fn dispatch(state: &State, method: &str, params: &Value) -> anyhow::Result<Value
 
 // ── handlers ───────────────────────────────────────────────────────────
 
-fn handle_initialize(state: &State, params: &Value) -> anyhow::Result<Value> {
+fn handle_initialize(state: &mut State, params: &Value) -> anyhow::Result<Value> {
     let _root = params.get("rootUri").and_then(|v| v.as_str());
     let version = params
         .get("version")
@@ -212,12 +188,8 @@ fn handle_initialize(state: &State, params: &Value) -> anyhow::Result<Value> {
             PROTOCOL_VERSION
         ));
     }
-    // SAFETY: the stdio loop is single-threaded, so toggling the flag via a
-    // raw pointer is sound for v1.  Phase 2 swaps this for an `AtomicBool`.
-    unsafe {
-        let p = &state.initialised as *const bool as *mut bool;
-        *p = true;
-    }
+    // Safe: dispatch takes &mut State, so the write is checked by the borrow checker.
+    state.initialised = true;
     Ok(json!({
         "ok": true,
         "capabilities": { "kinds": ["cite", "ref", "math"] },

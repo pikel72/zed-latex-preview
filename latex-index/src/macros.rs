@@ -72,10 +72,10 @@ fn next_char_ident(b: u8) -> bool {
 
 // ── one macro definition ───────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct MacroSite {
     cmd: &'static str,
-    name: &'static str,
+    name: String,
     arity: u32,
     body_open: usize,
 }
@@ -150,15 +150,10 @@ fn read_macro_def(text: &[u8], at: usize) -> Option<MacroSite> {
         return None;
     }
 
-    // SAFETY: we copy `name` into a `&'static str` via leaking the bytes for
-    // the duration of this call only.  Easier: just return `(name_owned,
-    // cmd, arity, body_open)` by leaking the slice.  In practice we never
-    // hold on to these across calls, so a `String` clone is fine.
+    // Owned String instead of Box::leak — avoids a per-call heap leak.
     Some(MacroSite {
         cmd,
-        // SAFETY: `name` lives until end of function; the lifetime here is
-        // fine because MacroSite is consumed immediately in `extract`.
-        name: Box::leak(name.to_string().into_boxed_str()),
+        name: name.to_string(),
         arity,
         body_open: after,
     })
@@ -195,18 +190,17 @@ pub fn extract_macros(text: &str, path: &Path, index: &Index) {
                     if site.cmd == "DeclareMathOperator" {
                         body_str = format!("\\operatorname{{{}}}", body_str);
                     }
+                    // `name` is owned; reuse it directly instead of re-cloning.
                     let def = MacroDef {
-                        name: site.name.to_string(),
+                        name: site.name.clone(),
                         file: path.to_path_buf(),
                         body: body_str,
                         arity: site.arity,
                     };
-                    index.macros.insert(def.name.clone(), def);
+                    index.macros.insert(site.name, def);
                     i = end;
                     continue;
                 }
-                // Drop the leaked `name` slice by re-using it as static.
-                // (It's a small allocation per failed parse; acceptable.)
             }
         }
         i += 1;
