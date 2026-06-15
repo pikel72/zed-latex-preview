@@ -9,6 +9,11 @@ const cfg = {
   scale: 1.4,
   color: "auto" as const,
   renderer: "mathjax" as const,
+  enabledSidecar: false,
+  enabledCitePreview: false,
+  enabledRefPreview: false,
+  sidecarPath: null,
+  bibMaxFileSizeMB: 5,
 };
 
 test("hover on $E=mc^2$ returns markdown image", async () => {
@@ -70,7 +75,7 @@ test("cache key distinguishes display: true vs false", async () => {
 test("preamble macros are expanded", async () => {
   // The document itself contains no \R definition — it comes from preamble.
   const src = "Let $\\R^2$ be the plane.";
-  const r = await hoverFor(src, { line: 0, character: 7 }, cfg, { R: { body: "\\mathbb{R}", arity: 0 } });
+  const r = await hoverFor(src, { line: 0, character: 7 }, cfg, undefined, null, { R: { body: "\\mathbb{R}", arity: 0 } });
   assert.ok(r);
   assert.match(r!.contents.value, /^!\[formula\]\(data:image\/svg\+xml;base64,/);
 });
@@ -79,7 +84,7 @@ test("document macro overrides preamble macro of same name", async () => {
   const src = "\\newcommand{\\R}{\\mathcal{R}}\n$\\R$";
   // Preamble defines \R = \mathbb{R}, but document overrides with \mathcal{R}.
   // Cursor on \R (line 1, character 1 = the backslash).
-  const r = await hoverFor(src, { line: 1, character: 1 }, cfg, { R: { body: "\\mathbb{R}", arity: 0 } });
+  const r = await hoverFor(src, { line: 1, character: 1 }, cfg, undefined, null, { R: { body: "\\mathbb{R}", arity: 0 } });
   assert.ok(r);
   assert.match(r!.contents.value, /^!\[formula\]\(data:image\/svg\+xml;base64,/);
 });
