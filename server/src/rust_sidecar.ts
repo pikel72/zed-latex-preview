@@ -376,8 +376,16 @@ export async function startSidecar(
   opts: SidecarLaunchOpts,
 ): Promise<SidecarHandle | null> {
   const binPath = resolveSidecarPath(opts.binPath);
+  console.error(`[latex-preview] startSidecar: binPath=${binPath ?? "null"} rootUri=${opts.rootUri ?? "null"}`);
   if (!binPath) return null;
-  return await SidecarHandle.spawn(binPath, opts.rootUri, opts);
+  try {
+    const h = await SidecarHandle.spawn(binPath, opts.rootUri, opts);
+    console.error(`[latex-preview] startSidecar.spawn returned ${h ? "handle" : "null"}`);
+    return h;
+  } catch (e) {
+    console.error(`[latex-preview] startSidecar.spawn threw: ${e}`);
+    throw e;
+  }
 }
 
 export type { SidecarHandle };
