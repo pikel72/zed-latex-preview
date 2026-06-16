@@ -1,9 +1,12 @@
 # GitHub Actions CI for latex-preview
 #
-# Three jobs:
-#   - rust:    cargo build --release + cargo test (unit + ignored integration on non-Windows)
-#   - node:    npm ci + npm test (includes the live-binary smoke test once a Rust binary is built)
-#   - lint:    cargo clippy on stable (best-effort; non-blocking warnings)
+# Single matrix job: build `latex-preview-lsp` (the Rust native LSP) and run
+# the full test suite (unit + LSP integration) on every platform we ship a
+# binary for.  Artifacts are uploaded per OS so the extension release process
+# can pick them up.
+#
+# The legacy Node LSP is no longer on the runtime path (see
+# docs/rust-primary-refactor-plan.md) and is deleted by Phase 7.
 
 name: CI
 
@@ -18,24 +21,24 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-  # ── Rust sidecar: build, unit tests, integration tests ──────────────
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # Linux + macOS run the ignored integration tests; Windows skips
-        # them because libtest's output-capture mode deadlocks the
-        # spawned sidecar (known platform quirk, documented in
-        # latex-index/tests/end_to_end_ipc.rs).
-        #
-        # macos-13 pins the x64 image.  `macos-latest` currently resolves
-        # to an arm64 M1 runner, and Phase 1 close-out noted that the
-        # arm64 runner "sometimes hang" on the integration suite; pinning
-        # to x64 keeps CI green until that gets a proper fix.  Switch
-        # back to `macos-latest` once the hang is diagnosed.
-        os: [ubuntu-latest, macos-13]
+        include:
+          - os: ubuntu-latest
+            binary: latex-preview-lsp
+          - os: macos-13
+            binary: latex-preview-lsp
+          - os: windows-latest
+            binary: latex-preview-lsp.exe
+        # macos-13 pins the x64 image.  Earlier cutover notes flagged
+        # intermittent arm64 runner hangs; pinning keeps CI green while
+        # the new LSP integration suite (which spawns its own processes
+        # via direct pipe reads, no libtest output capture) stabilises
+        # on arm64.  Revisit once macos-latest is green.
     defaults:
       run:
         working-directory: latex-index
@@ -58,82 +61,19 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: cargo build --release
-        run: cargo build --release --locked
+        run: cargo build --release --bin latex-preview-lsp --locked
 
       - name: cargo test (unit + integration)
-        # macOS arm64 runners sometimes hang on the integration tests
-        # when run with default settings; the --nocapture + serial
-        # threads combination is reliable across Linux + macOS x64.
-        run: cargo test --locked -- --nocapture --test-threads=1
+        # --nocapture + serial threads keeps the LSP integration suite
+        # stable across Linux + macOS x64.  The integration tests spawn
+        # their own child processes with direct pipe reads, so libtest's
+        # output capture does not deadlock them — but serial execution
+        # avoids port contention when multiple LSPs try to bind stdio.
+        run: cargo test --bin latex-preview-lsp --locked -- --nocapture --test-threads=1
 
-      - name: Upload release binary
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: latex-index-${{ matrix.os }}
-          path: latex-index/target/release/latex-index
-          if-no-files-found: error
-
-  # ── Node LSP: build, all tests, including the live-binary smoke ───
-  node:
-    name: node (ubuntu)
-    runs-on: ubuntu-latest
-    needs: rust
-    defaults:
-      run:
-        working-directory: server
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: server/package-lock.json
-
-      - name: npm ci
-        run: npm ci
-
-      # The smoke test spawns the real latex-index binary.  Download
-      # the one built by the rust job.
-      - name: Download release binary
-        uses: actions/download-artifact@v4
-        with:
-          name: latex-index-ubuntu-latest
-          path: latex-index/target/release
-
-      - name: Make binary executable
-        run: chmod +x latex-index/target/release/latex-index
-
-      - name: npm test
-        # Force the smoke test to find the binary by setting LATEX_INDEX_PATH.
-        env:
-          LATEX_INDEX_PATH: ${{ github.workspace }}/latex-index/target/release/latex-index
-        run: npm test
-
-  # ── Rust on Windows: build + unit tests only ──────────────────────
-  # Documented limitation: integration tests are `#[ignore]`-d on
-  # Windows because the sidecar process-spawn hangs under libtest's
-  # output-capture mode.  Unit tests still run and the release binary
-  # is produced for the Windows extension release.
-  rust-windows:
-    name: rust (windows, unit-only)
-    runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: latex-index
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: cargo build --release
-        run: cargo build --release --locked
-      - name: cargo test (unit-only)
-        run: cargo test --lib --bins --locked
       - name: Upload release binary
         uses: actions/upload-artifact@v4
         with:
-          name: latex-index-windows-latest
-          path: latex-index/target/release/latex-index.exe
+          name: latex-preview-lsp-${{ matrix.os }}
+          path: latex-index/target/release/${{ matrix.binary }}
           if-no-files-found: error
