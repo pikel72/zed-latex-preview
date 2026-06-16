@@ -319,7 +319,7 @@ A future improvement: split on `,` inside the `cursor_context` call and return t
 | Watcher event for a path under `node_modules`        | Ancestor filter rejects it.                                                   |
 | Two `update_file` events for the same path back-to-back | Debouncer keeps the latest, fires once at T+200ms.                         |
 | Sidecar restarted mid-session                        | Watcher dies with the process. `startSidecar` reconnect does not currently re-spawn it — out of scope (Phase 1 close-out). |
-| `rootUri: null` in `initialize`                      | Watcher not spawned; hover/completion/lookup paths keep working.             |
+| `rootUri: null` in `initialize`                      | Watcher not spawned; hover/lookup paths keep working.                        |
 | `initialize` called twice                            | Second call is a no-op (idempotency guard); watcher is not double-spawned.    |
 | File watch path > 260 chars on Windows               | `notify` handles long paths via `\\?\` prefix on Windows 10+. No special action. |
 
@@ -369,6 +369,8 @@ These run inside the existing `npm test` invocation; no new infra.
 
 The 25 existing Rust unit tests + 4 ignored integration tests + 104 Node tests all remain untouched. Any drop in their pass count is a regression this spec explicitly forbids.
 
+**Scope reminder.** This repository implements **only** `textDocument/hover` (and a file watcher to keep the hover data fresh). It does not register `textDocument/definition`, `textDocument/completion`, `textDocument/documentSymbol`, `textDocument/formatting`, or any `textDocument/codeAction` provider. LSP capabilities advertised in `server/src/server.ts` remain `{ textDocumentSync: Full, hoverProvider: true }` and nothing more. Features that would normally fall under those handlers — goto-definition for labels, `\cite{` completion, document outline — are explicitly out of scope and intentionally delegated to `zed_latex` (the full LaTeX plugin). See the repository `README.md` for the boundary statement.
+
 ### 7.6 Performance budget
 
 - `\ref` hover latency: < 1 ms TS-side formatting + 1 IPC round-trip ≈ 5 ms p50, < 20 ms p99. (Plan §9 AC4.)
@@ -398,9 +400,21 @@ Phase 1 close-out items (async `workspace_macros`, sidecar restart, macos-arm64 
 
 ## 9. Open questions deferred to Phase 3
 
-1. Splitting `\cref{eq:a,eq:b}` into three lookups for multi-key hovers.
-2. LSP `textDocument/documentLink` so ref hovers are clickable.
-3. `.gitignore` parsing for the watcher scope.
-4. Diagnostic on `found=false` (currently hover silently does not appear).
+All Phase 3 candidates stay inside the **hover-only** scope (see §7.5 scope reminder and the repository `README.md`):
 
-Snippet truncation policy (12 lines / 4 KiB, append `% (truncated)`) is fixed in §4.1. None block this spec. The remaining items are explicit carry-overs to Phase 3 or later.
+1. **Multi-key `\cref` / `\cite` split.** `\cref{eq:a,eq:b}` and `\cite{a,b,c}` are currently one-command-many-keys; the cursor hits one key, the others fall through with `found=false`. Split the key list at `,` in `cursor.rs` and emit one hover per visible key.
+2. **Bibtex entry richer preview.** Render the `abstract` field in the cite hover, plus optional `doi` / `url` as clickable links (markdown links, no LSP `documentLink`).
+3. **Dictionary expansion.** Grow `latex-index/src/dict.rs` from ~130 entries toward ~300 — more packages (`siunitx`, `tikz`, `beamer`, `hyperref`, `listings`, `minted`, `fontspec`, `unicode-math`, `physics`, `bm`, `mathtools`, `biblatex`, `natbib`, `geometry`, `caption`, `subcaption`, `xcolor`, `inputenc`, `fontenc`, `lmodern`, `etoolbox`, `xparse`, …) and more commands (math + sectioning + reference). Source: hand-curated, no `texdoc` shell-out.
+4. **WatchDebounceMs configuration.** Hardcoded to 200ms in §4.2; expose as a user setting in a later phase.
+5. **`.gitignore` parsing for the watcher scope.** Marginal value; revisit only on user complaint.
+6. **Diagnostic on `found=false`.** Currently hover silently does not appear. Could publish a `Diagnostic` with `severity: Hint` instead, but that crosses into `textDocument/publishDiagnostics` territory — only do it if the hover-only boundary is reconsidered.
+
+**Explicitly not on the Phase 3 list** (delegated to `zed_latex`):
+- `textDocument/definition` for labels / cites / packages
+- `textDocument/completion` for `\cite{` / `\ref{` / `\usepackage{`
+- `textDocument/documentSymbol` / outline
+- `textDocument/formatting` (latexindent integration)
+- `textDocument/codeAction` / chktex diagnostics
+- `textDocument/documentLink`
+
+Snippet truncation policy (12 lines / 4 KiB, append `% (truncated)`) is fixed in §4.1. None of the items above block this spec.
