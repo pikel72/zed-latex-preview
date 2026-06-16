@@ -9,11 +9,12 @@
 //!   * Extension filter (drop non-`.tex`/`.bib`).
 //!   * `SKIP_DIRS` ancestor filter (re-used from `workspace`, not redeclared).
 //!   * `fs::read_to_string`; on error return silently (prior index entry kept).
-//!   * Dispatch to `extract_labels` / `parse_bibtex`.  Both already
+//!   * Dispatch to `extract_labels` + `extract_macros` / `parse_bibtex`.  These already
 //!     `retain` their own entries on entry, so no separate
 //!     `index.remove_file` is needed here.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,40 +28,69 @@ use crate::workspace::SKIP_DIRS;
 /// knob is a Phase-3 polish item.
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(200);
 
+/// Owns the watcher thread plus its shutdown signal.  Dropping the handle
+/// closes the shutdown channel, which wakes the worker thread out of its
+/// blocking `recv()` and lets the debouncer drop cleanly before the thread
+/// exits.  The destructor then joins the thread so the LSP shutdown path
+/// is not racy on the way out (`tests/lsp_integration.rs` relies on this:
+/// the child must exit promptly after `shutdown` so `Drop` on `LspChild`
+/// does not have to fall back to `kill`).
+pub struct WatcherHandle {
+    shutdown_tx: Option<mpsc::Sender<()>>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for WatcherHandle {
+    fn drop(&mut self) {
+        // Drop the sender first; the worker's `recv()` returns Err and the
+        // thread exits, which in turn drops the debouncer (and its OS
+        // watcher) on the worker's stack rather than during process tear-down.
+        drop(self.shutdown_tx.take());
+        if let Some(j) = self.join.take() {
+            let _ = j.join();
+        }
+    }
+}
+
 /// Spawn a background thread that watches `root` recursively and updates
 /// `index` whenever a `.tex` or `.bib` file under `root` changes.
 ///
-/// The thread blocks on `park_timeout` until the process exits — the
-/// watcher drops with the process.
-pub fn spawn_watcher(root: PathBuf, index: Arc<Index>) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        let mut debouncer = match new_debouncer(DEBOUNCE_WINDOW, move |res: DebounceEventResult| {
-            match res {
+/// The returned handle owns the thread; dropping it signals shutdown and
+/// joins.  Call sites should keep it alive for the lifetime of the LSP
+/// session and drop it when the server stops.
+pub fn spawn_watcher(root: PathBuf, index: Arc<Index>) -> WatcherHandle {
+    let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>();
+    let join = std::thread::spawn(move || {
+        let mut debouncer =
+            match new_debouncer(DEBOUNCE_WINDOW, move |res: DebounceEventResult| match res {
                 Ok(events) => {
                     for e in events {
                         handle_event(&index, &e.path);
                     }
                 }
                 Err(e) => eprintln!("watcher: {e}"),
-            }
-        }) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("watcher: failed to create debouncer: {e}");
-                return;
-            }
-        };
+            }) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("watcher: failed to create debouncer: {e}");
+                    return;
+                }
+            };
 
         if let Err(e) = debouncer.watcher().watch(&root, RecursiveMode::Recursive) {
             eprintln!("watcher: failed to watch {root:?}: {e}");
             return;
         }
 
-        // Keep the watcher alive until the process exits.
-        loop {
-            std::thread::park_timeout(Duration::from_secs(3600));
-        }
-    })
+        // Block until the WatcherHandle drops its sender; the debouncer
+        // stays alive on this stack the whole time.  Disconnect is the
+        // only legitimate wake — there are no other senders.
+        let _ = shutdown_rx.recv();
+    });
+    WatcherHandle {
+        shutdown_tx: Some(shutdown_tx),
+        join: Some(join),
+    }
 }
 
 /// Process a single debounced event path.  Public so the unit tests can
@@ -103,6 +133,7 @@ pub fn handle_event(index: &Index, path: &Path) {
         crate::bibtex::parse_bibtex(&text, path, index);
     } else {
         crate::labels::extract_labels(&text, path, index);
+        crate::macros::extract_macros(&text, path, index);
     }
 }
 
@@ -233,6 +264,31 @@ mod tests {
         assert!(
             idx.labels.get("sec:w0").is_none(),
             "intermediate writes should have been superseded by the final write"
+        );
+
+        cleanup(&tmp);
+    }
+
+    #[test]
+    fn handle_drop_returns_promptly() {
+        // Regression for the old `park_timeout(3600s)` loop: the worker
+        // must exit within seconds of the handle being dropped, not at
+        // process tear-down.  Watch a real temp dir so the debouncer
+        // actually starts, then drop the handle and time the join.
+        let tmp = tempdir();
+        let idx = Arc::new(Index::new());
+        let handle = spawn_watcher(tmp.clone(), idx);
+
+        // Give the watcher a beat to enter its blocking `recv()`.
+        std::thread::sleep(Duration::from_millis(150));
+
+        let start = std::time::Instant::now();
+        drop(handle);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "watcher Drop took {elapsed:?}, expected sub-second"
         );
 
         cleanup(&tmp);

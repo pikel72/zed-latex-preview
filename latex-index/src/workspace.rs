@@ -81,9 +81,16 @@ pub fn normalise_uri(raw: &str) -> Option<PathBuf> {
     let p = if let Some(rest) = raw.strip_prefix("file://") {
         let decoded = percent_decode(rest);
         // Windows: file:///C:/path → /C:/path → C:/path
+        // After strip_prefix the remaining string starts with `/` (the
+        // path component's first separator).  Drive letter is at index 1,
+        // colon at index 2, separator at index 3.
         if cfg!(windows) && decoded.starts_with('/') {
             let bytes = decoded.as_bytes();
-            if bytes.len() >= 3 && bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\') {
+            if bytes.len() >= 4
+                && bytes[1].is_ascii_alphabetic()
+                && bytes[2] == b':'
+                && (bytes[3] == b'/' || bytes[3] == b'\\')
+            {
                 decoded[1..].to_string()
             } else {
                 decoded

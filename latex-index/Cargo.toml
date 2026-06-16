@@ -2,13 +2,17 @@
 name = "latex-index"
 version = "0.1.0"
 edition = "2021"
-description = "Rust sidecar binary for the Zed LaTeX hover-preview LSP: workspace-wide label, citation, and macro indexing."
+description = "Rust native language server for the Zed LaTeX hover-preview extension: workspace-wide label/citation/macro indexing plus MathJax SVG hover rendering. The legacy `latex-index` sidecar binary ships alongside `latex-preview-lsp` during the cutover."
 license = "MIT"
 publish = false
 
 [[bin]]
 name = "latex-index"
 path = "src/main.rs"
+
+[[bin]]
+name = "latex-preview-lsp"
+path = "src/lsp_main.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -19,6 +23,10 @@ anyhow = "1"
 thiserror = "1"
 notify = "6"
 notify-debouncer-mini = "0.4"
+lsp-server = "0.7"
+lsp-types = "0.95"
+base64 = "0.22"
+mathjax-svg-rs = "0.4"
 
 [profile.release]
 opt-level = 3

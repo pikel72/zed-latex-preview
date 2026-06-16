@@ -36,9 +36,10 @@ struct State {
     buffers: BufferStore,
     initialised: bool,
     shutdown: Arc<AtomicBool>,
-    /// JoinHandle for the spawned file watcher, if any.  Kept so the
-    /// thread is joined cleanly on shutdown.
-    watcher: Option<std::thread::JoinHandle<()>>,
+    /// File watcher handle.  Dropping it signals the watcher thread to exit
+    /// and joins it; we hold it here so the cleanup runs exactly once on
+    /// shutdown rather than at unpredictable process tear-down.
+    watcher: Option<crate::watcher::WatcherHandle>,
 }
 
 impl State {
@@ -96,15 +97,14 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Spec §4.3: clean up the watcher thread before returning.  The
-    // thread parks on a 1h timeout and would otherwise leak; joining
-    // here is the single place we own the JoinHandle.
+    // Spec §4.3: clean up the watcher thread before returning.  Dropping
+    // the handle signals the watcher's `recv()` to wake, drops the
+    // debouncer on the worker stack, and joins the thread — all in the
+    // `WatcherHandle::drop` impl.
     drop(out);
     drop(lines);
     drop(state.buffers); // BufferStore is dropped before index to release refs
-    if let Some(handle) = state.watcher.take() {
-        let _ = handle.join();
-    }
+    drop(state.watcher.take());
     Ok(())
 }
 
