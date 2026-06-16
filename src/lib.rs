@@ -80,25 +80,53 @@ impl zed::Extension for LatexPreviewExtension {
             });
         }
 
-        // 3. Bundled/development Rust LSP binary.  Zed sets PWD to
-        // `{extensions}/work/{ext_id}`; for dev extensions the real files live
-        // at `{extensions}/installed/{ext_id}`, so mirror the old path rewrite.
-        let dir = extension_dir();
-        for candidate in lsp_binary_candidates(&dir) {
-            if !candidate.is_empty() && std::fs::metadata(&candidate).is_ok() {
-                return Ok(zed::Command {
-                    command: candidate,
-                    args: extra_args,
-                    env: Default::default(),
-                });
+        // 3. Bundled/development Rust LSP binary.  Try two PWD variants:
+        //    - raw PWD (Zed's working dir for the extension)
+        //    - PWD with `work/` rewritten to `installed/` (Zed's dev
+        //      install convention where the install dir is a junction
+        //      into the source tree)
+        //    For each, probe `bin/`, `latex-index/target/release/`, and
+        //    `latex-index/target/debug/`.
+        let exe = lsp_binary_name();
+        let pwd_raw = std::env::var("PWD").unwrap_or_default();
+        let pwd_raw_trim = pwd_raw.trim_end_matches(['/', '\\']).to_string();
+        let pwd_installed = pwd_raw
+            .replace("\\work\\", "\\installed\\")
+            .replace("/work/", "/installed/")
+            .trim_end_matches(['/', '\\'])
+            .to_string();
+        let mut tried = Vec::new();
+        for dir in [pwd_raw_trim, pwd_installed] {
+            if dir.is_empty() {
+                continue;
+            }
+            for sub in ["bin", "latex-index/target/release", "latex-index/target/debug"] {
+                let candidate = format!("{dir}/{sub}/{exe}");
+                if std::fs::metadata(&candidate).is_ok() {
+                    return Ok(zed::Command {
+                        command: candidate,
+                        args: extra_args,
+                        env: Default::default(),
+                    });
+                }
+                tried.push(candidate);
             }
         }
 
-        // No candidate exists on disk.  Returning the conventional path would
-        // hand Zed a path it cannot spawn, producing an opaque launch error.
-        // Surface the missing-binary cause explicitly instead of silently
-        // falling back to Node, which is no longer the runtime.
-        Err("latex-preview: `latex-preview-lsp` was not found; build `latex-index` or set `lsp.latex-preview.binary.path`".into())
+        // No candidate exists on disk.  Tell the user exactly where we
+        // looked and what to do, rather than handing Zed a path it can't
+        // spawn.  Falling back to Node is no longer an option.
+        let tried_list = tried.join("\n      ");
+        Err(format!(
+            "latex-preview: `{exe}` was not found.  Looked in:\n      {tried_list}\n  \
+             Fix one of:\n    \
+             1. Put `{exe}` on your PATH and reload Zed.\n    \
+             2. Set `lsp.latex-preview.binary.path` in Zed settings to an absolute path.\n    \
+             3. Build it and copy it into `bin/` next to `extension.wasm`:\n         \
+                cd latex-index && cargo build --release --bin latex-preview-lsp\n         \
+                cp target/release/{exe} ../bin/"
+        )
+        .into())
     }
 
     /// Forward `lsp.latex-preview.settings` to the LSP as
@@ -120,25 +148,12 @@ impl zed::Extension for LatexPreviewExtension {
     }
 }
 
-fn extension_dir() -> String {
-    let pwd = std::env::var("PWD").unwrap_or_default();
-    pwd.replace("\\work\\", "\\installed\\")
-        .replace("/work/", "/installed/")
-        .trim_end_matches(['/', '\\'])
-        .to_string()
-}
-
-fn lsp_binary_candidates(dir: &str) -> Vec<String> {
-    let exe = if matches!(zed::current_platform().0, zed::Os::Windows) {
+fn lsp_binary_name() -> &'static str {
+    if matches!(zed::current_platform().0, zed::Os::Windows) {
         "latex-preview-lsp.exe"
     } else {
         "latex-preview-lsp"
-    };
-    vec![
-        format!("{dir}/bin/{exe}"),
-        format!("{dir}/latex-index/target/release/{exe}"),
-        format!("{dir}/latex-index/target/debug/{exe}"),
-    ]
+    }
 }
 
 zed::register_extension!(LatexPreviewExtension);
