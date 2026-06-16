@@ -96,7 +96,7 @@ export async function hoverFor(
       } else if (ctx.kind === "ref" && cfg.enabledRefPreview && ctx.key) {
         try {
           const r = await sidecar.lookup(ctx.key, "ref");
-          const out = refHoverFor(r, ctx.range);
+          const out = await refHoverFor(r, ctx.range, cfg);
           if (out) return out;
           // ref-hover returns null on not-found → fall through.
         } catch {
@@ -123,7 +123,10 @@ export async function hoverFor(
 
   // Workspace‑wide macros as base, then this document's own definitions
   // override them (document takes precedence over other files).
-  const base = macroOverride ?? getWorkspaceMacros();
+  // `macroOverride` (test hook) is a sync map; in production we hit the
+  // sidecar via the IPC path so macros from never-opened files like
+  // `preamble.tex` are included.
+  const base = macroOverride ?? await getWorkspaceMacros();
   const docMacros = getDocMacros(text);
   const macros = mergeMacros(base, docMacros);
   const expanded = expand(region.source, macros);

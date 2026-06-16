@@ -82,9 +82,13 @@ The watcher runs **inside the Rust sidecar**, not in Node. Rationale: it gives u
    - **found=false** → return `null`. Hover does not appear. (Matches latex-workshop convention; user opted for this.)
    - **found=true**:
      - build header from `env` + `caption` (or key when caption is empty)
-     - append fenced code block of `snippet`
+     - **math env** (equation / equation* / align / align* / gather / gather* / multline / multline*):
+       - render snippet via MathJax → embedded as `![formula](data:image/svg+xml;base64,…)`
+       - MathJax recognises `&=` / `\\` only inside `\begin{aligned}` / `\begin{gathered}`; the wrapper is added by `ref_hover.ts::wrapForRender` (equation body is passed through unchanged)
+       - on MathJax error, fall back to fenced code block (snippet stays visible)
+     - **other envs** (theorem, lemma, section, …) and unknown envs → fenced code block of `snippet`
      - append `file:line`
-     - return `{ contents: { kind: "markdown", value } }`. No SVG, no MathJax call.
+     - return `{ contents: { kind: "markdown", value } }`.
 
 `refHoverFor` runs entirely in TypeScript. The Rust side never sees the formatted output.
 
@@ -221,7 +225,7 @@ export function refHoverFor(
 - `headerFor`: switch on `entry.env` — see §3 step 6 for the rules.
 - `fence`: wrap the snippet in a CommonMark code fence. **Rule** (CommonMark §4.5): scan the snippet for the longest run of consecutive backticks; let that length be `N`. Use a fence of `N+1` backticks, and a matching closing fence of the same length. With `N=0` (no backticks in the snippet) this degenerates to the conventional triple-backtick fence. TeX almost never contains triple-backticks, but `lstlisting` / `minted` / `verbatim*` body text might, and the commonmark.org spec is explicit that an inner fence must be longer than any inner run. Implementation: one helper `fenceFor(snippet: string): string` that returns the opening fence (closing is identical). No per-character escaping required.
 - `relativePath`: strip the LSP root prefix so the pointer is short.
-- No SVG, no MathJax — this is documented in the plan and the user confirmed.
+- **Rendering strategy** (revised post-implementation): math envs (equation / equation* / align / align* / gather / gather* / multline / multline*) get rendered via MathJax and embedded as a data-URI image. `wrapForRender` injects `\begin{aligned}` / `\begin{gathered}` so the snippet's `&=` and `\\` parse; on MathJax error the snippet falls back to a fenced code block so the hover is never blank. Other envs (theorem, lemma, section, …) keep the original fenced-block treatment.
 
 ### 4.7 `server/src/hover.ts` — minimal change
 

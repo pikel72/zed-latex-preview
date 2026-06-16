@@ -134,7 +134,16 @@ export function updateFileMacros(uri: string, text: string): void {
   // 1. In-process cache (fallback).
   fileCache.set(filePath, extractMacros(text));
 
-  // 2. Sidecar (primary).
+  // 2. Drop the sidecar workspace-macros snapshot.  The sidecar will
+  //    rebuild its own index from the `update_file` we're about to
+  //    send, and our cached `cachedMacros` (which is a snapshot from
+  //    the previous IPC) no longer reflects the workspace.  The
+  //    invalidate MUST happen synchronously here — otherwise a hover
+  //    fired in the same tick as a didOpen would still see the stale
+  //    snapshot and skip the re-IPC.
+  invalidate();
+
+  // 3. Sidecar (primary).
   if (sidecar) {
     sidecar.update_file(uri, text).then(() => invalidate()).catch((e) => {
       // A single failed `update_file` (e.g. one bad request, queue
@@ -155,22 +164,33 @@ export function updateFileMacros(uri: string, text: string): void {
 
 /**
  * Return the merged macro map from all discovered workspace files.
- * Hits the sidecar when available (one IPC round-trip, cached), and
- * falls back to the in-process `fileCache` otherwise.
+ *
+ * Async because the sidecar path issues a `workspace_macros` IPC the
+ * first time after a cold start or after `updateFileMacros` calls
+ * `invalidate()` — the in-process `fileCache` is per-file and only
+ * covers files Zed has actually opened (e.g. macros defined in
+ * `preamble.tex` never make it in).  Without the IPC, a hover on
+ * `$x$` in `main.tex` would lose `\newcommand{\R}{...}` defined in
+ * `preamble.tex`.
+ *
+ * Path selection:
+ *   - sidecar + cache valid  → cached value, no IPC
+ *   - sidecar + cache empty → await sidecar.workspace_macros(), prime
+ *   - no sidecar            → merged in-process fileCache
  */
-export function getWorkspaceMacros(): MacroMap {
+export async function getWorkspaceMacros(): Promise<MacroMap> {
   // Fast path: cached, sidecar alive.
   if (sidecar && cachedMacros && !cachedDirty) return cachedMacros;
   if (sidecar) {
-    // We MUST return synchronously because `hoverFor` consumes a MacroMap,
-    // not a Promise.  The sidecar path is async; fall back to the in-
-    // process cache for this call and let the next `didOpen` / `didChange`
-    // re-prime us.  In practice the in-process cache is updated alongside
-    // every sidecar call, so it converges within one keystroke.
-    //
-    // The "right" fix is to make `getWorkspaceMacros` async; deferred to
-    // Phase 2 to keep this PR mechanical.
-    return mergedFileCache();
+    try {
+      const r = await sidecar.workspace_macros();
+      primeCache(r.macros);
+      return cachedMacros!;
+    } catch {
+      // Sidecar hiccup — fall back to the in-process cache.  Better
+      // a partial answer than an exception escaping to hoverFor.
+      return mergedFileCache();
+    }
   }
   return mergedFileCache();
 }
