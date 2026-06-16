@@ -80,13 +80,19 @@ impl zed::Extension for LatexPreviewExtension {
             });
         }
 
-        // 3. Bundled/development Rust LSP binary.  Try two PWD variants:
-        //    - raw PWD (Zed's working dir for the extension)
-        //    - PWD with `work/` rewritten to `installed/` (Zed's dev
-        //      install convention where the install dir is a junction
-        //      into the source tree)
-        //    For each, probe `bin/`, `latex-index/target/release/`, and
-        //    `latex-index/target/debug/`.
+        // 3. Bundled/development Rust LSP binary.  Construct the conventional
+        //    path from the extension's PWD (Zed sets PWD to the work
+        //    copy of the extension).  For dev installs the install
+        //    dir is a junction into the source tree, so we rewrite
+        //    `work/` → `installed/` and the resulting path resolves
+        //    through the junction to the source's `bin/`.
+        //
+        //    We deliberately do NOT probe with `std::fs::metadata`:
+        //    the WASM sandbox can't follow the junction, so the probe
+        //    returns "not found" even when the file exists.  Returning
+        //    the constructed path and letting Zed's spawn validate it
+        //    gives a correct outcome in dev installs AND a clearer
+        //    error from Zed when the binary really is missing.
         let exe = lsp_binary_name();
         let pwd_raw = std::env::var("PWD").unwrap_or_default();
         let pwd_raw_trim = pwd_raw.trim_end_matches(['/', '\\']).to_string();
@@ -95,38 +101,24 @@ impl zed::Extension for LatexPreviewExtension {
             .replace("/work/", "/installed/")
             .trim_end_matches(['/', '\\'])
             .to_string();
-        let mut tried = Vec::new();
-        for dir in [pwd_raw_trim, pwd_installed] {
-            if dir.is_empty() {
-                continue;
-            }
-            for sub in ["bin", "latex-index/target/release", "latex-index/target/debug"] {
-                let candidate = format!("{dir}/{sub}/{exe}");
-                if std::fs::metadata(&candidate).is_ok() {
-                    return Ok(zed::Command {
-                        command: candidate,
-                        args: extra_args,
-                        env: Default::default(),
-                    });
-                }
-                tried.push(candidate);
-            }
+        let dir = if !pwd_installed.is_empty() {
+            pwd_installed
+        } else {
+            pwd_raw_trim
+        };
+        if dir.is_empty() {
+            return Err(
+                "latex-preview: cannot resolve binary location (PWD is unset).  \
+                 Set `lsp.latex-preview.binary.path` in Zed settings to an absolute path."
+                    .into(),
+            );
         }
-
-        // No candidate exists on disk.  Tell the user exactly where we
-        // looked and what to do, rather than handing Zed a path it can't
-        // spawn.  Falling back to Node is no longer an option.
-        let tried_list = tried.join("\n      ");
-        Err(format!(
-            "latex-preview: `{exe}` was not found.  Looked in:\n      {tried_list}\n  \
-             Fix one of:\n    \
-             1. Put `{exe}` on your PATH and reload Zed.\n    \
-             2. Set `lsp.latex-preview.binary.path` in Zed settings to an absolute path.\n    \
-             3. Build it and copy it into `bin/` next to `extension.wasm`:\n         \
-                cd latex-index && cargo build --release --bin latex-preview-lsp\n         \
-                cp target/release/{exe} ../bin/"
-        )
-        .into())
+        let candidate = format!("{dir}/bin/{exe}");
+        Ok(zed::Command {
+            command: candidate,
+            args: extra_args,
+            env: Default::default(),
+        })
     }
 
     /// Forward `lsp.latex-preview.settings` to the LSP as
