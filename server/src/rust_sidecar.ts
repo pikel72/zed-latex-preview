@@ -88,9 +88,10 @@ export function resolveSidecarPath(explicit?: string | null): string | null {
 }
 
 function candidateCargoOutputs(): string[] {
-  // server.js may be bundled at <ext-root>/server/out/src/server.js, or run
-  // via tsx from <ext-root>/server/src/server.ts.  Resolve both.
-  const ext = path.dirname(findExtRoot());
+  // findExtRoot() already returns the ext root (e.g. X:\Code\zed-latex-preview).
+  // Join directly — do NOT call path.dirname() on it: that would strip one
+  // level (giving e.g. X:\Code\) and the joined target would not exist.
+  const ext = findExtRoot();
   const exe = process.platform === "win32" ? "latex-index.exe" : "latex-index";
   const targets = ["release", "debug"];
   const out: string[] = [];
@@ -106,7 +107,6 @@ function findExtRoot(): string {
   // We walk up: out/src -> out -> server -> <ext-root>.
   // If running via tsx from src/, we go up two levels: src -> server -> <ext-root>.
   const here = path.dirname(fileURLToPath(import.meta.url));
-  console.error(`[latex-preview] findExtRoot: here=${here}`);
   // Try going up 3 levels first (compiled layout), then 2 (dev layout).
   for (const n of [3, 2, 1]) {
     let p = here;
@@ -116,7 +116,6 @@ function findExtRoot(): string {
     const probe2b = path.join(p, "latex-index");
     const okExt = fs.existsSync(probe);
     const okLayout = fs.existsSync(probe2a) && fs.existsSync(probe2b);
-    console.error(`[latex-preview] findExtRoot n=${n} p=${p} ext.toml=${okExt} layout=${okLayout}`);
     if (okExt || okLayout) {
       return p;
     }
@@ -378,16 +377,8 @@ export async function startSidecar(
   opts: SidecarLaunchOpts,
 ): Promise<SidecarHandle | null> {
   const binPath = resolveSidecarPath(opts.binPath);
-  console.error(`[latex-preview] startSidecar: binPath=${binPath ?? "null"} rootUri=${opts.rootUri ?? "null"}`);
   if (!binPath) return null;
-  try {
-    const h = await SidecarHandle.spawn(binPath, opts.rootUri, opts);
-    console.error(`[latex-preview] startSidecar.spawn returned ${h ? "handle" : "null"}`);
-    return h;
-  } catch (e) {
-    console.error(`[latex-preview] startSidecar.spawn threw: ${e}`);
-    throw e;
-  }
+  return await SidecarHandle.spawn(binPath, opts.rootUri, opts);
 }
 
 export type { SidecarHandle };
