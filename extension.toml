@@ -5,7 +5,7 @@ schema_version = 1
 authors = ["Pikel"]
 description = """Companion extension that renders LaTeX math formulas as SVG \
 images in hover tooltips. Works alongside the official LaTeX extension for \
-completions and diagnostics.  Requires Node.js 18+ on PATH."""
+completions and diagnostics. Uses a Rust native language server."""
 repository = "https://github.com/pikel72/zed-latex-preview"
 
 [language_servers.latex-preview]

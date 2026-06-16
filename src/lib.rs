@@ -4,10 +4,11 @@
 //! second language server (`latex-preview`) that renders LaTeX math formulas
 //! as SVG tooltips on hover.
 //!
-//! The LSP itself is a bundled Node.js server (under `server/`) using MathJax
-//! for TeX → SVG.  This Rust stub only resolves the launch command and forwards
-//! the user's `lsp.latex-preview.settings` to the server as LSP
-//! `initializationOptions`.
+//! The LSP itself is a Rust native binary (`latex-preview-lsp`) that handles
+//! LSP transport, workspace indexing, hover dispatch, and MathJax-backed SVG
+//! rendering.  This WASM stub only resolves the launch command and forwards the
+//! user's `lsp.latex-preview.settings` to the server as LSP initialization
+//! options.
 //!
 //! ## Configuration
 //!
@@ -21,6 +22,9 @@
 //! | `timeoutMs` | `u64` | `1500` | MathJax render timeout (ms) |
 //! | `scale` | `f64` | `1.4` | SVG scale multiplier |
 //! | `color` | `str` | `"auto"` | `"auto"`, `"black"`, or `"white"` |
+//! | `enabledCitePreview` | `bool` | `true` | Toggle `\cite{…}` hover previews |
+//! | `enabledRefPreview` | `bool` | `true` | Toggle `\ref{…}` hover previews |
+//! | `enabledDocPreview` | `bool` | `true` | Toggle package/command doc hovers |
 
 use zed_extension_api::{self as zed};
 
@@ -40,7 +44,7 @@ impl zed::Extension for LatexPreviewExtension {
     /// Resolution order:
     /// 1. User-provided `lsp.latex-preview.binary.path` setting
     /// 2. `latex-preview-lsp` binary on `PATH`
-    /// 3. Bundled `server/out/src/server.js` run via Node
+    /// 3. Bundled/development `latex-preview-lsp` binary in the extension tree
     fn language_server_command(
         &mut self,
         language_server_id: &zed::LanguageServerId,
@@ -76,31 +80,25 @@ impl zed::Extension for LatexPreviewExtension {
             });
         }
 
-        // 3. Bundled Node.js server.
-        if let Some(node) = worktree.which("node") {
-            // Zed sets PWD to `{extensions}/work/{ext_id}`, but for dev
-            // extensions that directory is empty — the real files live at the
-            // source, reachable via a symlink at
-            // `{extensions}/installed/{ext_id}`.  Rewrite "work" → "installed"
-            // so the resolved path follows the symlink to the real dir.
-            // (WASI has no canonicalize(), so we rewrite the string by hand.)
-            let pwd = std::env::var("PWD").unwrap_or_default();
-            let dir = pwd
-                .replace("\\work\\", "\\installed\\")
-                .replace("/work/", "/installed/");
-            let mut args = vec![
-                format!("{}/server/out/src/server.js", dir.trim_end_matches('/')),
-                "--stdio".to_string(),
-            ];
-            args.extend(extra_args);
-            return Ok(zed::Command {
-                command: node,
-                args,
-                env: Default::default(),
-            });
+        // 3. Bundled/development Rust LSP binary.  Zed sets PWD to
+        // `{extensions}/work/{ext_id}`; for dev extensions the real files live
+        // at `{extensions}/installed/{ext_id}`, so mirror the old path rewrite.
+        let dir = extension_dir();
+        for candidate in lsp_binary_candidates(&dir) {
+            if !candidate.is_empty() && std::fs::metadata(&candidate).is_ok() {
+                return Ok(zed::Command {
+                    command: candidate,
+                    args: extra_args,
+                    env: Default::default(),
+                });
+            }
         }
 
-        Err("latex-preview: neither `latex-preview-lsp` nor `node` found on PATH".into())
+        // No candidate exists on disk.  Returning the conventional path would
+        // hand Zed a path it cannot spawn, producing an opaque launch error.
+        // Surface the missing-binary cause explicitly instead of silently
+        // falling back to Node, which is no longer the runtime.
+        Err("latex-preview: `latex-preview-lsp` was not found; build `latex-index` or set `lsp.latex-preview.binary.path`".into())
     }
 
     /// Forward `lsp.latex-preview.settings` to the LSP as
@@ -120,6 +118,27 @@ impl zed::Extension for LatexPreviewExtension {
             .unwrap_or_default();
         Ok(Some(settings))
     }
+}
+
+fn extension_dir() -> String {
+    let pwd = std::env::var("PWD").unwrap_or_default();
+    pwd.replace("\\work\\", "\\installed\\")
+        .replace("/work/", "/installed/")
+        .trim_end_matches(['/', '\\'])
+        .to_string()
+}
+
+fn lsp_binary_candidates(dir: &str) -> Vec<String> {
+    let exe = if matches!(zed::current_platform().0, zed::Os::Windows) {
+        "latex-preview-lsp.exe"
+    } else {
+        "latex-preview-lsp"
+    };
+    vec![
+        format!("{dir}/bin/{exe}"),
+        format!("{dir}/latex-index/target/release/{exe}"),
+        format!("{dir}/latex-index/target/debug/{exe}"),
+    ]
 }
 
 zed::register_extension!(LatexPreviewExtension);

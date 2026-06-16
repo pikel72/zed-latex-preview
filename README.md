@@ -10,15 +10,17 @@ macros found in your workspace and renders the result with MathJax.
 
 ## Requirements
 
-- **Node.js 18+** must be on your `PATH` (the LSP server is a bundled Node.js
-  program that uses MathJax for rendering).
+- A bundled or user-configured **Rust native `latex-preview-lsp` binary**.
+  During development, build it with `cd latex-index && cargo build --bin
+  latex-preview-lsp`.
 
 ## Quick start
 
 1. Install **both** extensions:
    - `LaTeX` (official — provides texlab for completions / diagnostics)
    - `LaTeX Preview (Math Hover)` (this one — provides hover SVGs)
-2. Make sure Node.js 18+ is on your `PATH`.
+2. Make sure `latex-preview-lsp` is bundled with the extension or available on
+   your `PATH`.
 3. Open a `.tex` file and hover over any math formula (`$E=mc^2$`,
    `\[ \int_\Omega \]`, …).
 4. To adjust the size, add to your Zed `settings.json`:
@@ -44,6 +46,9 @@ All settings live under `"lsp"."latex-preview"."settings"`:
 | `color` | `"auto"` \| `"black"` \| `"white"` | `"auto"` | SVG text colour. `auto` renders black — **dark-theme users should set `"white"`** |
 | `timeoutMs` | `number` | `1500` | Maximum time (ms) spent rendering a formula |
 | `maxFormulaLength` | `number` | `2000` | Skip formulas whose TeX source exceeds this |
+| `enabledCitePreview` | `boolean` | `true` | When `false`, `\cite{…}` hovers are skipped |
+| `enabledRefPreview` | `boolean` | `true` | When `false`, `\ref{…}`/`\eqref{…}` hovers are skipped |
+| `enabledDocPreview` | `boolean` | `true` | When `false`, package/command doc hovers are skipped |
 
 ### Scale tuning
 
@@ -99,73 +104,70 @@ are expanded, including multi-argument macros (`\newcommand{\foo}[2]{#1+#2}`
 │  ┌─ latex (texlab)   ─── completions, diagnostics     │
 │  └─ latex-preview ───── hover SVGs                    │
 │       │                                                │
-│       └─ node server/out/src/server.js                 │
-│            ├─ scanner.ts    find math region           │
-│            ├─ macros.ts     extract & expand macros    │
-│            ├─ preamble.ts   scan workspace .tex files  │
-│            ├─ render.ts     MathJax TeX → SVG          │
-│            ├─ cache.ts      LRU render cache           │
-│            ├─ config.ts     user settings              │
-│            └─ server.ts     LSP protocol glue          │
+│       └─ latex-preview-lsp (Rust native LSP)           │
+│            ├─ cursor.rs     cursor context / math scan │
+│            ├─ macros.rs     extract & expand macros    │
+│            ├─ labels.rs     ref target indexing        │
+│            ├─ bibtex.rs     citation indexing          │
+│            ├─ dict.rs       package / command docs     │
+│            ├─ watcher.rs    workspace file updates     │
+│            └─ lsp_main.rs   LSP + MathJax SVG hover    │
 └────────────────────────────────────────────────────────┘
 ```
 
 ## Building from source
 
 ```bash
-# TypeScript LSP server
-cd server
-npm ci
-npx tsc -p tsconfig.json
+# Rust native LSP server
+cd latex-index
+cargo build --release --bin latex-preview-lsp
 
 # Rust extension (WASI)
-cargo build --target wasm32-wasip2
-cp target/wasm32-wasip2/debug/latex_preview.wasm extension.wasm
+cd ..
+cargo build --target wasm32-wasip2 --release
+cp target/wasm32-wasip2/release/latex_preview.wasm extension.wasm
+```
+
+Bundle the binary so the extension can find it without a user-set path:
+
+```bash
+mkdir -p bin
+cp latex-index/target/release/latex-preview-lsp bin/   # .exe on Windows
 ```
 
 Run the test suite:
 
 ```bash
-cd server
-npx tsx --test test/scanner.test.ts
-npx tsx --test test/macros.test.ts
-npx tsx --test test/render.smoke.ts
-npx tsx --test test/hover.test.ts
-npx tsx --test test/cache.test.ts
+cd latex-index
+cargo test --bin latex-preview-lsp --test lsp_integration
 ```
 
-## Building the Rust sidecar
+## Language server lookup
 
-Cite/ref hover previews require the Rust sidecar.
+The extension resolves the Rust LSP in this order:
 
-Build it from the repo root with:
+1. `lsp.latex-preview.binary.path` in Zed settings
+2. `latex-preview-lsp` on `PATH`
+3. `<extension>/bin/latex-preview-lsp`
+4. `<extension>/latex-index/target/release/latex-preview-lsp`
+5. `<extension>/latex-index/target/debug/latex-preview-lsp`
 
-```bash
-cd latex-index && cargo build --release
-```
+On Windows, the binary name is `latex-preview-lsp.exe`.
 
-The resulting binary lives at `latex-index/target/release/latex-index`
-(or `latex-index.exe` on Windows).
-
-Lookup order at runtime:
-
-1. `LATEX_INDEX_PATH` environment variable
-2. `latex-index/target/release/` directory in the workspace
-3. `PATH`
-
-If the binary is missing, the extension logs a warning once and falls back
-to math-only hover.
-
-To disable the sidecar explicitly, set the following in your Zed
-`settings.json`:
+For local development, a direct binary override is the most predictable setup:
 
 ```json
-"lsp.latex-preview": {
-  "settings": {
-    "enabledSidecar": false
+"lsp": {
+  "latex-preview": {
+    "binary": {
+      "path": "/absolute/path/to/latex-index/target/release/latex-preview-lsp"
+    }
   }
 }
 ```
+
+On Windows use the `.exe` suffix and forward slashes:
+`C:/path/to/latex-index/target/release/latex-preview-lsp.exe`.
 
 ## Licence
 
