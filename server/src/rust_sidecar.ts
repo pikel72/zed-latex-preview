@@ -163,6 +163,12 @@ class SidecarHandle {
   private shuttingDown = false;
   private buffer: string = "";
   private alive = true;
+  /// Set to true when the child process has actually exited.  Differs
+  /// from `alive = false` in that a single per-request JSON-RPC error
+  /// does NOT flip this — only the process-level `exit` event does.
+  /// Callers (e.g. `preamble.ts`) use this to decide whether to retry
+  /// the sidecar or permanently give up.
+  private exited = false;
 
   private constructor(
     child: ChildProcess,
@@ -208,6 +214,7 @@ class SidecarHandle {
     });
     child.on("exit", (code, signal) => {
       handle.alive = false;
+      handle.exited = true;
       const reason = `sidecar exited (code=${code} signal=${signal})`;
       for (const p of handle.pending.values()) {
         p.reject(new Error(reason));
@@ -272,6 +279,17 @@ class SidecarHandle {
 
   async ping(): Promise<PingResult> {
     return (await this.request("ping", {})) as PingResult;
+  }
+
+  /**
+   * True once the child process has exited.  Differs from "the most
+   * recent request failed": a single per-method JSON-RPC error reply
+   * does not flip this.  Use this to decide whether a transient
+   * rejection should be retried or whether the sidecar is permanently
+   * dead and the in-process fallback should take over.
+   */
+  isExited(): boolean {
+    return this.exited;
   }
 
   async shutdown(): Promise<void> {

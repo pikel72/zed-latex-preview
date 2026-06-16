@@ -65,6 +65,32 @@ export function invalidate(): void {
   cachedDirty = true;
 }
 
+/**
+ * Pre-populate the workspace-macro cache from a sidecar snapshot.
+ * Called once during `setSidecar(...)` to avoid the cold-start gap
+ * where the in-process `fileCache` is still empty (no `didOpen` has
+ * fired yet) and the first hover would otherwise return `{}`,
+ * dropping macros from `preamble.tex` and sibling files.
+ *
+ * `sidecarMacros` is the raw array returned by the sidecar's
+ * `workspace_macros()` IPC.  We merge it into the same in-process
+ * shape `getWorkspaceMacros()` returns, so the cache contract is
+ * uniform regardless of which path warmed it.
+ */
+export function primeCache(
+  sidecarMacros: Array<{ name: string; body: string; arity: number }>,
+): void {
+  const merged: MacroMap = {};
+  for (const m of sidecarMacros) {
+    merged[m.name] = { body: m.body, arity: m.arity };
+  }
+  // Keep the in-process fileCache as the source of truth for
+  // fallback-only paths; layer the sidecar snapshot on top.
+  for (const m of Object.values(fileCache)) Object.assign(merged, m);
+  cachedMacros = merged;
+  cachedDirty = false;
+}
+
 /** Reset all cached state.  Test-only hook. */
 export function _resetForTesting(): void {
   fileCache.clear();
@@ -110,12 +136,19 @@ export function updateFileMacros(uri: string, text: string): void {
 
   // 2. Sidecar (primary).
   if (sidecar) {
-    sidecar.update_file(uri, text).then(() => invalidate()).catch(() => {
-      // Sidecar hiccup; we already have the file in `fileCache`, so the
-      // fallback path is still correct.  Mark the sidecar dead so
-      // `getWorkspaceMacros` stops waiting on it.
-      sidecar = null;
-      invalidate();
+    sidecar.update_file(uri, text).then(() => invalidate()).catch((e) => {
+      // A single failed `update_file` (e.g. one bad request, queue
+      // overflow, JSON-RPC error reply) should NOT permanently disable
+      // the sidecar — it might just be a transient hiccup and the next
+      // `update_file` / `lookup` will work.  Only the process-level
+      // `exit` event counts as "dead, give up" (see isExited()).
+      if (sidecar && sidecar.isExited()) {
+        sidecar = null;
+        invalidate();
+      }
+      // For per-request errors we keep `sidecar` and let the next call
+      // retry; the in-process fileCache above stays correct either way.
+      void e;
     });
   }
 }

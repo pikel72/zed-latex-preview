@@ -23,6 +23,11 @@ export interface PreviewConfig {
   enabledCitePreview: boolean;
   /** When true, hover previews are shown for `\ref{...}`.  Default `true`. */
   enabledRefPreview: boolean;
+  /** When true, hover previews are shown for `\usepackage{<pkg>}` and
+   *  bare command names (e.g. `\textbf`) that have an entry in the
+   *  bundled dictionary.  Default `true`.  Independent of the cite / ref
+   *  flags so users can opt out without losing ref preview. */
+  enabledDocPreview: boolean;
   /** Optional explicit path to the `latex-index` binary.  Default `null`
    *  = auto-resolve from `LATEX_INDEX_PATH`, the cargo `target/` dir, or PATH. */
   sidecarPath: string | null;
@@ -41,6 +46,7 @@ export function defaultConfig(): PreviewConfig {
     enabledSidecar: true,
     enabledCitePreview: true,
     enabledRefPreview: true,
+    enabledDocPreview: true,
     sidecarPath: null,
     bibMaxFileSizeMB: 5,
   };
@@ -63,6 +69,7 @@ export function configFromInit(initializationOptions: unknown): PreviewConfig {
   cfg.enabledSidecar    = pick(o, "enabledSidecar",    isBool,  cfg.enabledSidecar);
   cfg.enabledCitePreview = pick(o, "enabledCitePreview", isBool, cfg.enabledCitePreview);
   cfg.enabledRefPreview  = pick(o, "enabledRefPreview",  isBool, cfg.enabledRefPreview);
+  cfg.enabledDocPreview  = pick(o, "enabledDocPreview",  isBool,  cfg.enabledDocPreview);
   cfg.sidecarPath       = pick(o, "sidecarPath",       isString, cfg.sidecarPath);
   cfg.bibMaxFileSizeMB  = pick(o, "bibMaxFileSizeMB",  isNumber, cfg.bibMaxFileSizeMB);
   return cfg;

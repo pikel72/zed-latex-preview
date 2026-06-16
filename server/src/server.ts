@@ -30,7 +30,7 @@ import { createConnection, ProposedFeatures, TextDocuments, TextDocumentSyncKind
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { configFromInit } from "./config.js";
 import { hoverFor } from "./hover.js";
-import { initWorkspaceMacros, updateFileMacros, setSidecar } from "./preamble.js";
+import { initWorkspaceMacros, updateFileMacros, setSidecar, primeCache } from "./preamble.js";
 import { invalidateScannerCache } from "./scanner.js";
 import { startSidecar, type SidecarHandle } from "./rust_sidecar.js";
 
@@ -57,6 +57,17 @@ connection.onInitialize(async (params) => {
         rootUri: params.rootUri ?? null,
       });
       setSidecar(sidecar);
+      // Cold-start prime: fetch the sidecar's workspace-macros snapshot
+      // eagerly so the first hover (which may fire before any didOpen)
+      // already has macros from preamble.tex / sibling files.  See
+      // preamble.ts::primeCache for the cold-start gap this closes.
+      if (sidecar) {
+        sidecar.workspace_macros().then((r) => primeCache(r.macros)).catch(() => {
+          // Failure here is non-fatal: getWorkspaceMacros will fall back
+          // to the in-process fileCache for the first few hovers until
+          // the next didOpen / didChange re-primes us.
+        });
+      }
       if (!sidecar && !sidecarWarned) {
         sidecarWarned = true;
         connection.console.warn(
@@ -82,23 +93,17 @@ connection.onInitialize(async (params) => {
 docs.onDidOpen((change) => {
   const uri = change.document.uri;
   const text = change.document.getText();
+  // `updateFileMacros` is the single forwarding point: it writes the
+  // in-process fileCache and forwards to the sidecar (with its own
+  // catch on transient errors).  Calling `sidecar.update_file` here
+  // as well would race the two writes and trigger the .catch twice.
   updateFileMacros(uri, text);
-  if (sidecar) {
-    sidecar.update_file(uri, text).catch(() => {
-      // sidecar hiccup — ignore (next call will retry)
-    });
-  }
 });
 
 docs.onDidChangeContent((change) => {
   const uri = change.document.uri;
   const text = change.document.getText();
   updateFileMacros(uri, text);
-  if (sidecar) {
-    sidecar.update_file(uri, text).catch(() => {
-      // ignore
-    });
-  }
 });
 
 docs.onDidClose((change) => {

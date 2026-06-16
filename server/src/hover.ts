@@ -76,7 +76,7 @@ export async function hoverFor(
   if (
     sidecar &&
     uri &&
-    (cfg.enabledCitePreview || cfg.enabledRefPreview)
+    (cfg.enabledCitePreview || cfg.enabledRefPreview || cfg.enabledDocPreview)
   ) {
     let ctx: Awaited<ReturnType<SidecarHandle["cursor_context"]>> | null = null;
     try {
@@ -102,7 +102,7 @@ export async function hoverFor(
         } catch {
           // fall through
         }
-      } else if (ctx.kind === "doc" && ctx.key) {
+      } else if (ctx.kind === "doc" && cfg.enabledDocPreview && ctx.key) {
         // Spec §4.9 ordering: cite → ref → doc → fall through to math.
         try {
           const out = await docHoverFor(ctx.key, sidecar);
