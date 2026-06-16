@@ -43,6 +43,11 @@ let sidecarWarned = false;
 
 connection.onInitialize(async (params) => {
   cfg = configFromInit(params.initializationOptions);
+  connection.console.log(
+    `[latex-preview] onInitialize: sidecar=${cfg.enabledSidecar} ` +
+    `cite=${cfg.enabledCitePreview} ref=${cfg.enabledRefPreview} doc=${cfg.enabledDocPreview} ` +
+    `rootUri=${params.rootUri ?? "null"}`,
+  );
   // Auto‑discover \def, \newcommand etc. from every .tex file in the
   // workspace.  Subsequent didOpen/didChange calls keep per‑file caches
   // up to date.
@@ -56,6 +61,7 @@ connection.onInitialize(async (params) => {
         binPath: cfg.sidecarPath,
         rootUri: params.rootUri ?? null,
       });
+      connection.console.log(`[latex-preview] startSidecar returned ${sidecar ? "handle" : "null"}`);
       setSidecar(sidecar);
       // Cold-start prime: fetch the sidecar's workspace-macros snapshot
       // eagerly so the first hover (which may fire before any didOpen)
@@ -75,7 +81,8 @@ connection.onInitialize(async (params) => {
             "Build with `cargo build --release` in `latex-index/` to enable.",
         );
       }
-    } catch {
+    } catch (e) {
+      connection.console.log(`[latex-preview] startSidecar threw: ${e}`);
       sidecar = null;
     }
   }
@@ -124,6 +131,11 @@ docs.listen(connection);
 connection.onHover((params) => {
   const doc = docs.get(params.textDocument.uri);
   const text = doc?.getText();
+  console.error(
+    `[latex-preview] HOVER req: uri=${params.textDocument.uri} ` +
+    `pos=${params.position.line}:${params.position.character} ` +
+    `sidecar=${sidecar ? "alive" : "null"} text_len=${text?.length ?? 0}`,
+  );
   if (!text) return null;
   return hoverFor(text, params.position, cfg, params.textDocument.uri, sidecar);
 });

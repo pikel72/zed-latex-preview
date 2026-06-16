@@ -130,6 +130,16 @@ export async function hoverFor(
   const docMacros = getDocMacros(text);
   const macros = mergeMacros(base, docMacros);
   const expanded = expand(region.source, macros);
+
+  // DIAG: emit to stderr so it shows up in the LSP log even if
+  // connection.console.log is suppressed.  Zed's stdio LSP runner pipes
+  // stderr into the LSP log channel.
+  console.error(
+    `[latex-preview] HOVER math: src=${JSON.stringify(region.source)} ` +
+    `expanded=${JSON.stringify(expanded)} ` +
+    `macros=${JSON.stringify(macros)}`,
+  );
+
   const macroBlock = JSON.stringify(macros);
 
   const key: CacheKey = {
@@ -153,8 +163,13 @@ export async function hoverFor(
       entry = r.ok
         ? { ok: true, dataUri: toDataUri(r.svg) }
         : { ok: false, error: r.error };
+      console.error(
+        `[latex-preview] RENDER: ok=${r.ok} ` +
+        `${r.ok ? "svg_len=" + r.svg.length : "err=" + r.error}`,
+      );
     } catch (e) {
       entry = { ok: false, error: e instanceof Error ? e.message : String(e) };
+      console.error(`[latex-preview] RENDER threw: ${e}`);
     }
     cache.set(key, entry);
   }
