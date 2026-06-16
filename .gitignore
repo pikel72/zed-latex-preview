@@ -3,10 +3,6 @@
 target/
 bin/
 
-# Node
-node_modules/
-server/out/
-
 # Local agent / tooling state
 .claude/
 

@@ -2,13 +2,9 @@
 name = "latex-index"
 version = "0.1.0"
 edition = "2021"
-description = "Rust native language server for the Zed LaTeX hover-preview extension: workspace-wide label/citation/macro indexing plus MathJax SVG hover rendering. The legacy `latex-index` sidecar binary ships alongside `latex-preview-lsp` during the cutover."
+description = "Rust native language server for the Zed LaTeX hover-preview extension: LSP transport, workspace-wide label/citation/macro indexing, and MathJax SVG hover rendering."
 license = "MIT"
 publish = false
-
-[[bin]]
-name = "latex-index"
-path = "src/main.rs"
 
 [[bin]]
 name = "latex-preview-lsp"

@@ -1,12 +1,13 @@
 # Plan - Rust-Primary LSP Refactor
 
-> Status: **runtime cutover complete; legacy cleanup pending**
+> Status: **complete** — Rust primary LSP shipped on the runtime path; legacy
+> Node path and sidecar binary removed.
 >
-> Phases 0–5 are done: `latex-preview-lsp` is the Rust native LSP, Zed
-> launches it through `src/lib.rs`, and math/cite/ref/doc hover all run
-> entirely in Rust with `mathjax-svg-rs` rendering.  Phase 6 (CI cutover)
-> and Phase 7 (delete legacy `server/` tree, remove old sidecar binary)
-> remain.  See *Cutover status* below for the per-phase exit-criteria check.
+> All seven phases are done.  The Rust native `latex-preview-lsp` is the only
+> language server; Zed launches it through `src/lib.rs`; the `server/` tree,
+> `latex-index/src/main.rs` sidecar binary, and `LATEX_INDEX_PATH` plumbing
+> are gone; CI builds and tests `latex-preview-lsp` on Linux, macOS, and
+> Windows.
 >
 > Scope: replace the current Node-primary LSP plus Rust sidecar split with a
 > Rust-native language server as the main runtime. TypeScript/Node should leave
@@ -436,10 +437,10 @@ The refactor is complete when:
 | 3 — Hover formatter migration | ✅ done | cite/ref/doc dispatch + markdown shape ported; `byte_range_to_lsp_range` converts in UTF-16 |
 | 4 — Math hover without Node | ✅ done | macro extraction + expansion in Rust; `mathjax-svg-rs` behind a single dedicated render worker; LRU cache (cap 64); error fallback uses *expanded* source |
 | 5 — Zed extension launch path | ✅ done | `src/lib.rs` resolves user-path → PATH → `bin/` → `target/release` → `target/debug`; Node fallback removed; missing-binary error is explicit |
-| 6 — Test and CI cutover | ⏳ partial | Rust tests are the primary gate (49 unit + 3 LSP-integration, all green). CI workflow still builds the old `latex-index` sidecar and runs `npm test`; needs to switch to `latex-preview-lsp` build + release-binary artifact per OS |
-| 7 — Remove legacy Node path | ⏳ pending | `server/` tree still present and marked legacy via `server/README.md`; `latex-index/src/main.rs` sidecar binary still built; `enabledSidecar` / `sidecarPath` config keys still in the TS server. Delete after Phase 6 is green on CI |
+| 6 — Test and CI cutover | ✅ done | `cargo test --bin latex-preview-lsp` runs unit + LSP integration tests on Linux, macOS x64, and Windows (51 tests, all green); per-OS release binaries uploaded as `latex-preview-lsp{,-$OS}` artifacts; the `node` CI job is gone |
+| 7 — Remove legacy Node path | ✅ done | `server/` tree, `latex-index/src/main.rs` sidecar, `latex-index/src/lsp_codec.rs`, `latex-index/tests/end_to_end_ipc.rs`, and the `enabledSidecar` / `sidecarPath` config keys are deleted; `.gitignore` no longer needs `server/out/` or `node_modules/` |
 
-### Known follow-ups outside Phases 6–7
+### Known follow-ups
 
 - **Scanner deduplication.** `tokenize_math` and friends are defined twice
   (cursor.rs and lsp_main.rs).  Plan §4 calls for `latex-preview-core` to
