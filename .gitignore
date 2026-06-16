@@ -1,6 +1,7 @@
 # Build outputs
 *.wasm
 target/
+bin/
 
 # Node
 node_modules/
