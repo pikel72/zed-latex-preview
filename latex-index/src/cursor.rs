@@ -390,6 +390,11 @@ pub fn cursor_context(uri: &str, offset: usize, store: &BufferStore) -> CursorCo
 struct MathSpan {
     start: usize,
     end: usize,
+    /// `true` for display math (`$$…$$`, `\[…\]`, `equation` …),
+    /// `false` for inline math.  Currently not surfaced (the hover
+    /// path uses MathJax for both), but kept for a future phase
+    /// where display-mode snippets may render differently.
+    #[allow(dead_code)]
     display: bool,
 }
 

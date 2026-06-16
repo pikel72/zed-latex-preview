@@ -22,16 +22,23 @@ pub const SKIP_DIRS: &[&str] = &[
     ".idea",
 ];
 
+// `MAX_DEPTH` and the `walk` helper are still exercised by the
+// `collect_files` unit tests below.  The dead_code lint can't see
+// `#[cfg(test)]` references from outside the module, so silence it
+// here with a clear pointer to the test coverage.
+#[allow(dead_code)]
 const MAX_DEPTH: usize = 20;
 
 /// Recursively collect every `*.tex` and `*.bib` file under `root`.
 /// Errors reading a directory are swallowed (matches Node behaviour).
+#[allow(dead_code)] // exercised by `collect_files_finds_tex_and_bib` test
 pub fn collect_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     walk(root, 0, &mut out);
     out
 }
 
+#[allow(dead_code)] // helper for `collect_files`
 fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     if depth > MAX_DEPTH {
         return;
@@ -63,46 +70,6 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
             }
         }
     }
-}
-
-/// Does `dir` contain any `*.tex` file directly inside it?
-pub fn has_tex_files(dir: &Path) -> bool {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return false,
-    };
-    for entry in entries.flatten() {
-        if let Ok(ft) = entry.file_type() {
-            if ft.is_file() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".tex") {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Walk upward from `file_path`'s directory until the parent no longer
-/// contains `.tex` files.  Returns that directory, or `None`.
-pub fn infer_project_root(file_path: &Path) -> Option<PathBuf> {
-    let mut dir = file_path.parent()?.to_path_buf();
-    if !has_tex_files(&dir) {
-        return None;
-    }
-    loop {
-        let parent = dir.parent()?.to_path_buf();
-        if parent == dir {
-            break;
-        }
-        if !has_tex_files(&parent) {
-            break;
-        }
-        dir = parent;
-    }
-    Some(dir)
 }
 
 /// Convert a `file://` URI or plain path into a normalised absolute path.

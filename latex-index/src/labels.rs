@@ -303,9 +303,18 @@ fn snippet_for_env_body(
 
 /// Build the snippet for `\section{...}\label{...}`: the single line
 /// containing the section command, with the trailing `\label{...}`.
+///
+/// When `\section` and `\label` live on the same line, that's one line.
+/// When they live on different lines, we deliberately take **only the
+/// section line** — the `\label` line gets surfaced via the file:line
+/// pointer in the hover, not duplicated as snippet content.
 fn snippet_for_section(text: &[u8], section_at: usize, label_at: usize) -> String {
     let ls = line_start(text, section_at);
-    let le = line_end(text, label_at.max(section_at));
+    // Always end the snippet at the section line, never at the label line.
+    // `label_at` is passed for symmetry with `snippet_for_env_body`; the
+    // section-line snippet does not need it.
+    let _ = label_at;
+    let le = line_end(text, section_at);
     let line = &text[ls..le];
     let s = std::str::from_utf8(line).unwrap_or("");
     truncate_snippet(s.trim_end_matches('\n'))

@@ -25,7 +25,6 @@ pub mod error {
     pub const PARSE_ERROR: i32 = -32700;
     pub const INVALID_REQUEST: i32 = -32600;
     pub const METHOD_NOT_FOUND: i32 = -32601;
-    pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;
 }
 
@@ -94,6 +93,7 @@ impl ResponseErr {
 
 /// Try to parse one NDJSON line into a `Request`.  Returns `None` for
 /// blank lines (so the loop can skip them).
+#[allow(dead_code)] // public API for future refactors of handle_line
 pub fn parse_line(line: &str) -> Result<Option<Request>, serde_json::Error> {
     let trimmed = line.trim();
     if trimmed.is_empty() {

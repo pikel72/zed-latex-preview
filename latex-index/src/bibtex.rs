@@ -374,7 +374,7 @@ pub fn parse_bibtex(text: &str, path: &Path, index: &Index) {
                 let mut p = probe + 1;
                 p = skip_ws(bytes, p);
                 let key = match read_entry_key(bytes, p) {
-                    Some((s, e, key)) => {
+                    Some((_s, e, key)) => {
                         p = e;
                         key
                     }

@@ -95,6 +95,16 @@ fn main() -> anyhow::Result<()> {
             let _ = out.flush();
         }
     }
+
+    // Spec §4.3: clean up the watcher thread before returning.  The
+    // thread parks on a 1h timeout and would otherwise leak; joining
+    // here is the single place we own the JoinHandle.
+    drop(out);
+    drop(lines);
+    drop(state.buffers); // BufferStore is dropped before index to release refs
+    if let Some(handle) = state.watcher.take() {
+        let _ = handle.join();
+    }
     Ok(())
 }
 
@@ -356,13 +366,19 @@ fn handle_lookup(state: &State, params: &Value) -> anyhow::Result<Value> {
 }
 
 fn label_to_labelref(entry: &LabelEntry) -> anyhow::Result<Value> {
+    // Mirrors `server/src/rpc_types.ts::LabelRef`.  Both `offset` and
+    // `snippet` are required; without them `refHoverFor` falls through
+    // with `entry.snippet === undefined` and `fenceFor(undefined)` throws
+    // (TS 1-line surprise, but a HARD regression in Rust 1-line fix).
     Ok(json!({
         "key": entry.key,
         "file": json_path(&entry.file),
+        "offset": entry.offset,
         "line": entry.line,
         "env": entry.env,
         "math": entry.math,
         "caption": entry.caption,
+        "snippet": entry.snippet,
     }))
 }
 

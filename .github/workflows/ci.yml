@@ -29,7 +29,13 @@ jobs:
         # them because libtest's output-capture mode deadlocks the
         # spawned sidecar (known platform quirk, documented in
         # latex-index/tests/end_to_end_ipc.rs).
-        os: [ubuntu-latest, macos-latest]
+        #
+        # macos-13 pins the x64 image.  `macos-latest` currently resolves
+        # to an arm64 M1 runner, and Phase 1 close-out noted that the
+        # arm64 runner "sometimes hang" on the integration suite; pinning
+        # to x64 keeps CI green until that gets a proper fix.  Switch
+        # back to `macos-latest` once the hang is diagnosed.
+        os: [ubuntu-latest, macos-13]
     defaults:
       run:
         working-directory: latex-index
