@@ -30,7 +30,7 @@ import { createConnection, ProposedFeatures, TextDocuments, TextDocumentSyncKind
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { configFromInit } from "./config.js";
 import { hoverFor } from "./hover.js";
-import { initWorkspaceMacros, updateFileMacros } from "./preamble.js";
+import { initWorkspaceMacros, updateFileMacros, setSidecar } from "./preamble.js";
 import { invalidateScannerCache } from "./scanner.js";
 import { startSidecar, type SidecarHandle } from "./rust_sidecar.js";
 
@@ -56,6 +56,7 @@ connection.onInitialize(async (params) => {
         binPath: cfg.sidecarPath,
         rootUri: params.rootUri ?? null,
       });
+      setSidecar(sidecar);
       if (!sidecar && !sidecarWarned) {
         sidecarWarned = true;
         connection.console.warn(
@@ -125,6 +126,7 @@ connection.onHover((params) => {
 // ══ shutdown ════════════════════════════════════════════════════════════
 
 async function onShutdown() {
+  setSidecar(null);
   if (sidecar) {
     try {
       await sidecar.shutdown();

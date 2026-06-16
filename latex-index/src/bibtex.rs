@@ -181,8 +181,13 @@ fn read_value<'a>(
                     if !first {
                         out.push(' ');
                     }
-                    let v = std::str::from_utf8(&text[s..e]).unwrap_or("");
-                    out.push_str(v);
+                    let name = std::str::from_utf8(&text[s..e]).unwrap_or("");
+                    // Bare identifiers may reference an @string macro.
+                    if let Some(v) = strings.get(name) {
+                        out.push_str(v);
+                    } else {
+                        out.push_str(name);
+                    }
                     i = e;
                     first = false;
                 } else {

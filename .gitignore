@@ -11,3 +11,9 @@ server/out/
 
 # OS noise
 **/.DS_Store
+
+# Manual test capture files (not cargo's own target/; these are
+# `cargo test ... > latex_test_out.txt` style dumps left in the crate
+# root by ad-hoc invocations).
+latex-index/latex_test_out.txt
+latex-index/test_result.txt
