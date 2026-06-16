@@ -106,16 +106,18 @@ function findExtRoot(): string {
   // We walk up: out/src -> out -> server -> <ext-root>.
   // If running via tsx from src/, we go up two levels: src -> server -> <ext-root>.
   const here = path.dirname(fileURLToPath(import.meta.url));
+  console.error(`[latex-preview] findExtRoot: here=${here}`);
   // Try going up 3 levels first (compiled layout), then 2 (dev layout).
   for (const n of [3, 2, 1]) {
     let p = here;
     for (let i = 0; i < n; i++) p = path.dirname(p);
-    // Heuristic: must contain Cargo.toml OR be parent of server/ AND latex-index/.
-    if (
-      fs.existsSync(path.join(p, "extension.toml")) ||
-      (fs.existsSync(path.join(p, "server")) &&
-        fs.existsSync(path.join(p, "latex-index")))
-    ) {
+    const probe = path.join(p, "extension.toml");
+    const probe2a = path.join(p, "server");
+    const probe2b = path.join(p, "latex-index");
+    const okExt = fs.existsSync(probe);
+    const okLayout = fs.existsSync(probe2a) && fs.existsSync(probe2b);
+    console.error(`[latex-preview] findExtRoot n=${n} p=${p} ext.toml=${okExt} layout=${okLayout}`);
+    if (okExt || okLayout) {
       return p;
     }
   }
